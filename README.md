@@ -36,6 +36,11 @@ The GitHub Actions workflow at `.github/workflows/android-apk.yml` builds a debu
 `android/` or when started manually. Download the `TelegramNotif-debug-apk` artifact from the
 workflow run. See [`android/README.md`](android/README.md) for setup and phone/emulator URLs.
 
+The APK can optionally start the backend locally through Termux on the same phone. Termux and the
+one-time Telegram login still need to be installed/configured by the user; Android does not allow
+the APK to silently install another app or complete an account login. The `termux/start_backend.sh`
+script performs the repeatable dependency check and backend startup.
+
 ## Telegram setup
 
 1. Create Telegram API credentials at `https://my.telegram.org` and put `TELEGRAM_API_ID` and

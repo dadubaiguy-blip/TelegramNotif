@@ -37,6 +37,15 @@ class SettingsStore(context: Context) {
         get() = preferences.getBoolean(KEY_AUTO_START, false)
         set(value) = preferences.edit().putBoolean(KEY_AUTO_START, value).apply()
 
+    var termuxAutoStart: Boolean
+        get() = preferences.getBoolean(KEY_TERMUX_AUTO_START, false)
+        set(value) = preferences.edit().putBoolean(KEY_TERMUX_AUTO_START, value).apply()
+
+    var termuxProjectPath: String
+        get() = preferences.getString(KEY_TERMUX_PROJECT_PATH, DEFAULT_TERMUX_PROJECT_PATH)
+            ?: DEFAULT_TERMUX_PROJECT_PATH
+        set(value) = preferences.edit().putString(KEY_TERMUX_PROJECT_PATH, value.trim().trimEnd('/')).apply()
+
     var monitorInitialized: Boolean
         get() = preferences.getBoolean(KEY_MONITOR_INITIALIZED, false)
         set(value) = preferences.edit().putBoolean(KEY_MONITOR_INITIALIZED, value).apply()
@@ -62,7 +71,10 @@ class SettingsStore(context: Context) {
         private const val KEY_ONLY_PRICED = "only_priced"
         private const val KEY_CLICK_TARGET = "click_target"
         private const val KEY_AUTO_START = "auto_start"
+        private const val KEY_TERMUX_AUTO_START = "termux_auto_start"
+        private const val KEY_TERMUX_PROJECT_PATH = "termux_project_path"
         private const val KEY_MONITOR_INITIALIZED = "monitor_initialized"
         private const val KEY_LAST_NOTIFICATION_ID = "last_notification_id"
+        const val DEFAULT_TERMUX_PROJECT_PATH = "/data/data/com.termux/files/home/TelegramNotif"
     }
 }

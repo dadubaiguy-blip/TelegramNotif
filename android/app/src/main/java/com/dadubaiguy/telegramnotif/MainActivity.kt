@@ -44,6 +44,9 @@ class MainActivity : Activity() {
     private lateinit var modelChoices: TextView
     private lateinit var channelsText: TextView
     private lateinit var channelInput: EditText
+    private lateinit var termuxPathInput: EditText
+    private lateinit var termuxAutoStartCheck: CheckBox
+    private lateinit var termuxStatusText: TextView
     private lateinit var notificationList: LinearLayout
     private val executor: ExecutorService = Executors.newFixedThreadPool(3)
     private var pendingNotificationId: Int? = null
@@ -57,6 +60,9 @@ class MainActivity : Activity() {
         requestNotificationPermission()
         refreshListings()
         loadChannels()
+        if (settings.termuxAutoStart) {
+            window.decorView.postDelayed({ startTermuxBackend(silent = true) }, 700)
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -145,6 +151,36 @@ class MainActivity : Activity() {
         content.addView(button("Add channel") { addChannel() }, marginParams(top = 8))
         channelsText = label("No channels loaded", 12f, Color.DKGRAY)
         content.addView(channelsText, marginParams(top = 8))
+
+        addSection("Run the backend on this phone with Termux")
+        content.addView(
+            label(
+                "Install Termux separately, clone this repository into the folder below, configure .env, and complete Telegram login once. After that, this app can send Termux a start command automatically whenever it opens.",
+                12f,
+                Color.DKGRAY,
+            ),
+        )
+        termuxPathInput = input("Termux project folder", settings.termuxProjectPath)
+        content.addView(termuxPathInput, marginParams(top = 8))
+        termuxAutoStartCheck = CheckBox(this).apply {
+            text = "Start the Termux backend automatically on app launch"
+            isChecked = settings.termuxAutoStart
+        }
+        content.addView(termuxAutoStartCheck, marginParams(top = 4))
+        val termuxButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        termuxButtons.addView(
+            button("Start backend now") { startTermuxBackend(silent = false) },
+            LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(0, dp(8), dp(4), 0) },
+        )
+        termuxButtons.addView(
+            button("Open Termux") { openTermux() },
+            LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), dp(8), 0, 0) },
+        )
+        content.addView(termuxButtons)
+        termuxStatusText = label("Termux backend startup is not enabled", 12f, Color.DKGRAY)
+        content.addView(termuxStatusText, marginParams(top = 5))
 
         addSection("Background alerts")
         content.addView(label("The foreground service polls the backend every 15 seconds and can show an image notification while the phone is asleep. Android notification and DND permissions still apply.", 12f, Color.DKGRAY))
@@ -357,6 +393,44 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun startTermuxBackend(silent: Boolean) {
+        saveLocalFields()
+        settings.termuxProjectPath = termuxPathInput.text.toString().ifBlank {
+            SettingsStore.DEFAULT_TERMUX_PROJECT_PATH
+        }
+        settings.termuxAutoStart = termuxAutoStartCheck.isChecked
+        if (!TermuxBridge.isInstalled(this)) {
+            termuxStatusText.text = "Termux is not installed. Install it, then enable external commands."
+            if (!silent) toast("Install Termux first")
+            return
+        }
+        termuxStatusText.text = "Sending backend start command to Termux…"
+        executor.execute {
+            try {
+                TermuxBridge.launch(this, settings.termuxProjectPath)
+                runOnUiThread {
+                    termuxStatusText.text = "Start command sent. Give Termux a few seconds to install/check dependencies."
+                    if (!silent) toast("Backend start command sent to Termux")
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    termuxStatusText.text = "Termux start failed: ${error.message ?: "allow external apps"}"
+                    if (!silent) toast("Enable Termux external commands first")
+                }
+            }
+        }
+    }
+
+    private fun openTermux() {
+        if (TermuxBridge.openTermux(this)) return
+        startActivity(
+            Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://f-droid.org/packages/com.termux/"),
+            ),
+        )
+    }
+
     private fun loadChannels() {
         if (!::channelsText.isInitialized) return
         saveLocalFields()
@@ -376,6 +450,7 @@ class MainActivity : Activity() {
         saveLocalFields()
         settings.autoStart = true
         if (!settings.monitorInitialized) settings.clearMonitorCursor()
+        if (termuxAutoStartCheck.isChecked) startTermuxBackend(silent = true)
         val serviceIntent = Intent(this, NotificationMonitorService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent) else startService(serviceIntent)
         status("Background alerts started")
@@ -405,6 +480,12 @@ class MainActivity : Activity() {
         settings.visionEnabled = visionCheck.isChecked
         settings.onlyPriced = onlyPricedCheck.isChecked
         settings.clickTarget = if (clickTargetGroup.checkedRadioButtonId == TELEGRAM_ID) "telegram" else "app"
+        if (::termuxPathInput.isInitialized) {
+            settings.termuxProjectPath = termuxPathInput.text.toString().ifBlank {
+                SettingsStore.DEFAULT_TERMUX_PROJECT_PATH
+            }
+            settings.termuxAutoStart = termuxAutoStartCheck.isChecked
+        }
     }
 
     private fun requestNotificationPermission() {
