@@ -22,18 +22,20 @@ run completes.
 ## First launch
 
 1. Either start the Python backend on a server reachable by the phone, or install Termux on the
-   same phone and clone this repository to `/data/data/com.termux/files/home/TelegramNotif`.
-2. For Termux-on-phone mode, configure `.env` and complete `python scripts/auth_telegram.py` once
-   in Termux. In Termux settings, enable external app commands by setting
+   same phone. The repository must be public for automatic first-time setup.
+2. For Termux-on-phone mode, enable external app commands by setting
    `allow-external-apps=true` in `~/.termux/termux.properties`, then restart Termux.
-3. Enter the backend URL in the app. Use `http://127.0.0.1:8000` for Termux on the same phone;
+   Open TelegramNotif and use the small gear icon to enable **Start and update through Termux**.
+   The app installs Git if needed, clones this repository to
+   `/data/data/com.termux/files/home/TelegramNotif`, and updates it on future launches.
+3. After the first clone, configure `.env` and complete `python scripts/auth_telegram.py` once in
+   Termux. These local credentials, the Telegram session, and the `data/` folder are not overwritten
+   by repository updates.
+4. Enter the backend URL in Settings. Use `http://127.0.0.1:8000` for Termux on the same phone;
    for the Android emulator's computer, use `http://10.0.2.2:8000`; for a physical phone and a
    computer backend, use the computer's LAN address or an HTTPS URL.
-4. Enable **Start the Termux backend automatically on app launch** if you want the APK to send the
-   startup command to Termux every time it opens. The script installs/checks Python dependencies,
-   acquires a wake lock when available, and starts Uvicorn without opening a terminal window.
 5. Enter the GapGPT key and text/vision model IDs, save, and test the connection.
-6. Join private Telegram channels with the account used by the backend session. Use **Find channels
+6. Join private Telegram channels with the account used by the backend session. Use **Find joined**
    I joined** or add a numeric `-100...` channel ID.
 7. Tap **Start alerts**. The app uses a foreground service to poll unread notifications every 15
    seconds and shows high-importance local notifications, including the first album image. All album

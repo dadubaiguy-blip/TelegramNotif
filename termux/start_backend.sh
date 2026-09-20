@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # This script is started by the Android APK through Termux's RUN_COMMAND service.
-# It assumes the repository has already been cloned and .env has been configured.
+# The Android bridge clones the repository before invoking this script.
 set -u
 
 PROJECT_DIR="${TELEGRAMNOTIF_PROJECT_DIR:-$HOME/TelegramNotif}"
@@ -9,37 +9,57 @@ LOG_DIR="$PROJECT_DIR/data"
 LOG_FILE="$LOG_DIR/termux-backend.log"
 PID_FILE="$LOG_DIR/termux-backend.pid"
 
-mkdir -p "$LOG_DIR"
-exec >>"$LOG_FILE" 2>&1
-echo "[$(date)] TelegramNotif startup requested"
-
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "Project folder not found: $PROJECT_DIR"
-    echo "Clone TelegramNotif there and configure .env before enabling automatic startup."
     exit 1
 fi
 
 cd "$PROJECT_DIR" || exit 1
 
-if ! command -v python >/dev/null 2>&1; then
+mkdir -p "$LOG_DIR"
+exec >>"$LOG_FILE" 2>&1
+echo "[$(date)] TelegramNotif startup requested"
+
+if ! command -v python >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
     pkg update -y || exit 1
     pkg install -y python git || exit 1
+fi
+
+OLD_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+if [ -d ".git" ]; then
+    git fetch origin main
+    if ! git pull --ff-only origin main; then
+        echo "Repository update skipped because local tracked files have changes."
+    fi
+fi
+NEW_COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+
+if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+    cp ".env.example" ".env"
+    echo "Created .env from .env.example. Telegram credentials still need to be entered once."
 fi
 
 if [ ! -x ".venv/bin/python" ]; then
     python -m venv .venv || exit 1
 fi
 
-if [ ! -f ".venv/.telegramnotif_dependencies_ready" ]; then
+DEPENDENCY_HASH="$(sha256sum pyproject.toml | cut -d ' ' -f 1)"
+INSTALLED_HASH="$(cat .venv/.telegramnotif_dependency_hash 2>/dev/null || true)"
+if [ "$DEPENDENCY_HASH" != "$INSTALLED_HASH" ]; then
     .venv/bin/python -m pip install -e . || exit 1
-    touch ".venv/.telegramnotif_dependencies_ready"
+    echo "$DEPENDENCY_HASH" >".venv/.telegramnotif_dependency_hash"
 fi
 
 if [ -f "$PID_FILE" ]; then
     RUNNING_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     if [ -n "$RUNNING_PID" ] && kill -0 "$RUNNING_PID" 2>/dev/null; then
-        echo "Backend already running as PID $RUNNING_PID"
-        exit 0
+        if [ "$OLD_COMMIT" = "$NEW_COMMIT" ]; then
+            echo "Backend already running as PID $RUNNING_PID"
+            exit 0
+        fi
+        echo "Repository updated. Restarting backend PID $RUNNING_PID"
+        kill "$RUNNING_PID" 2>/dev/null || true
+        sleep 1
     fi
 fi
 

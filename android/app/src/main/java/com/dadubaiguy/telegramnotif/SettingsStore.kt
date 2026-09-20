@@ -38,7 +38,7 @@ class SettingsStore(context: Context) {
         set(value) = preferences.edit().putBoolean(KEY_AUTO_START, value).apply()
 
     var termuxAutoStart: Boolean
-        get() = preferences.getBoolean(KEY_TERMUX_AUTO_START, false)
+        get() = preferences.getBoolean(KEY_TERMUX_AUTO_START, true)
         set(value) = preferences.edit().putBoolean(KEY_TERMUX_AUTO_START, value).apply()
 
     var termuxProjectPath: String
@@ -62,7 +62,7 @@ class SettingsStore(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_SERVER_URL = "http://10.0.2.2:8000"
+        const val DEFAULT_SERVER_URL = "http://127.0.0.1:8000"
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_API_KEY = "api_key"
         private const val KEY_TEXT_MODEL = "text_model"
