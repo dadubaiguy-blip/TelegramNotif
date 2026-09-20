@@ -1,0 +1,16 @@
+.env
+data/*.db
+data/*.db-*
+data/*.session
+data/*.session-journal
+data/media/*
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.generated-trash/
+.venv/
+*.pyc
+android/.gradle/
+android/build/
+android/app/build/

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#151718" />
+    <title>Telegram Watcher</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <div class="app-frame">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="Telegram Watcher home">
+          <span class="brand-mark">✦</span>
+          <span>Telegram Watcher</span>
+        </a>
+        <div class="top-actions">
+          <span id="connection-pill" class="status-pill is-pending">Connecting</span>
+          <button id="refresh-button" class="icon-button" title="Refresh feed" aria-label="Refresh feed">↻</button>
+          <button id="settings-button" class="icon-button" title="Open settings" aria-label="Open settings">⚙</button>
+        </div>
+      </header>
+
+      <main class="page" id="page">
+        <section class="hero">
+          <div>
+            <p class="eyebrow">Telegram radar</p>
+            <h1>Catch the drop.</h1>
+            <p class="hero-copy">One calm feed for the listings you actually want to see.</p>
+          </div>
+          <button id="enable-alerts" class="alert-button">Enable browser alerts</button>
+        </section>
+
+        <section class="stat-grid" aria-label="Feed summary">
+          <button class="stat-card is-selected" data-filter="all">
+            <span class="stat-label">All listings</span><strong id="stat-all">0</strong>
+          </button>
+          <button class="stat-card" data-filter="game">
+            <span class="stat-label">Games</span><strong id="stat-games">0</strong>
+          </button>
+          <button class="stat-card" data-filter="account">
+            <span class="stat-label">Accounts</span><strong id="stat-accounts">0</strong>
+          </button>
+          <button class="stat-card" data-filter="urgent">
+            <span class="stat-label">Watchlist hits</span><strong id="stat-urgent">0</strong>
+          </button>
+        </section>
+
+        <section class="content-grid">
+          <div class="feed-column">
+            <div class="feed-heading">
+              <div>
+                <p class="eyebrow">Live feed</p>
+                <h2>Latest listings</h2>
+              </div>
+              <button id="mark-all-read" class="text-button">Mark all read</button>
+            </div>
+
+            <div class="feed-toolbar">
+              <div class="tabs" id="filter-tabs" role="tablist" aria-label="Listing filters">
+                <button class="tab is-active" data-filter="all" role="tab">All</button>
+                <button class="tab" data-filter="game" role="tab">Games</button>
+                <button class="tab" data-filter="account" role="tab">Accounts</button>
+                <button class="tab" data-filter="urgent" role="tab">Watchlist</button>
+              </div>
+              <label class="search-box">
+                <span aria-hidden="true">⌕</span>
+                <input id="search-input" type="search" placeholder="Search games, channels, handles" autocomplete="off" />
+              </label>
+            </div>
+
+            <div id="feed" class="feed" aria-live="polite">
+              <div class="loading-card"><span class="spinner"></span> Loading your feed…</div>
+            </div>
+          </div>
+
+          <aside class="side-column">
+            <section class="panel" id="watchlist-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Priority</p>
+                  <h2>Watchlist</h2>
+                </div>
+                <span class="count-badge" id="watchlist-count">0</span>
+              </div>
+              <p class="panel-copy">Get an urgent highlight when a name appears.</p>
+              <form id="watchlist-form" class="inline-form">
+                <input id="watchlist-input" type="text" placeholder="e.g. GTA 6" maxlength="160" />
+                <button class="round-add" type="submit" aria-label="Add to watchlist">+</button>
+              </form>
+              <div id="watchlist-list" class="chip-list"><span class="muted">Nothing here yet.</span></div>
+            </section>
+
+            <section class="panel source-panel">
+              <div class="panel-heading">
+                <div>
+                  <p class="eyebrow">Sources</p>
+                  <h2>Watching</h2>
+                </div>
+                <button id="find-dialogs" class="small-button">Find joined</button>
+              </div>
+              <p class="panel-copy">Private channels appear after the Telegram account joins them.</p>
+              <div id="source-list" class="source-list"><span class="muted">Loading sources…</span></div>
+            </section>
+          </aside>
+        </section>
+      </main>
+
+      <nav class="mobile-nav" aria-label="App navigation">
+        <button class="nav-item is-active" data-nav="feed"><span>⌂</span>Feed</button>
+        <button class="nav-item" data-nav="watchlist"><span>☆</span>Watchlist</button>
+        <button class="nav-item" data-nav="settings"><span>⚙</span>Settings</button>
+      </nav>
+    </div>
+
+    <div id="settings-layer" class="layer" hidden>
+      <div class="layer-backdrop" data-close-settings></div>
+      <aside class="drawer" aria-label="Settings">
+        <div class="drawer-heading">
+          <div><p class="eyebrow">Control room</p><h2>Settings</h2></div>
+          <button class="icon-button" data-close-settings aria-label="Close settings">×</button>
+        </div>
+
+        <section class="drawer-section">
+          <div class="section-title"><h3>AI extraction</h3><span id="ai-status" class="mini-status">Not configured</span></div>
+          <p class="drawer-copy">Use one text model and an optional vision model for photos/albums.</p>
+          <form id="ai-form" class="settings-form">
+            <label>GapGPT base URL<input id="ai-base-url" type="url" placeholder="https://…/v1" /></label>
+            <label>API key<input id="ai-api-key" type="password" placeholder="Leave blank to keep current key" autocomplete="off" /></label>
+            <div class="two-up">
+              <label>Text model<input id="ai-model" list="model-options" placeholder="Select or type a model" /></label>
+              <label>Vision model<input id="ai-vision-model" list="model-options" placeholder="For images" /></label>
+            </div>
+            <datalist id="model-options"></datalist>
+            <div class="form-actions">
+              <button class="secondary-button" id="load-models" type="button">Load models</button>
+              <button class="primary-button" type="submit">Save AI settings</button>
+            </div>
+            <label class="check-row"><input id="enable-vision" type="checkbox" /> Analyze images before text extraction</label>
+            <div id="ai-result" class="inline-result" hidden></div>
+            <button class="text-button" id="test-ai" type="button">Test the text pipeline</button>
+          </form>
+        </section>
+
+        <section class="drawer-section">
+          <div class="section-title"><h3>Notifications</h3></div>
+          <label class="check-row"><input id="only-priced" type="checkbox" /> Only notify listings with a detected price</label>
+          <p class="drawer-copy small">Off by default: messages without a price still notify and show “Price not listed.”</p>
+          <div class="click-targets">
+            <span class="field-label">When I tap a notification</span>
+            <label class="radio-row"><input type="radio" name="click-target" value="app" /> Open in this app</label>
+            <label class="radio-row"><input type="radio" name="click-target" value="telegram" /> Open the Telegram message</label>
+          </div>
+          <button class="secondary-button full-width" id="save-notification-settings" type="button">Save notification settings</button>
+        </section>
+
+        <section class="drawer-section">
+          <div class="section-title"><h3>Private channels</h3></div>
+          <p class="drawer-copy">Join the private channel in Telegram with the same account used for this app, then find it here.</p>
+          <button class="secondary-button full-width" id="load-dialogs" type="button">Find channels I joined</button>
+          <div id="joined-dialogs" class="joined-dialogs"><span class="muted">Nothing loaded yet.</span></div>
+          <form id="manual-channel-form" class="settings-form manual-channel-form">
+            <label>Manual source / private chat ID<input id="manual-source" placeholder="-1001234567890 or @username" /></label>
+            <label>Display name<input id="manual-title" placeholder="Private channel" /></label>
+            <button class="secondary-button" type="submit">Add source</button>
+          </form>
+        </section>
+
+        <p class="drawer-footnote">Urgent styling cannot override phone DND or sleep rules. The native frontend still needs notification permissions.</p>
+      </aside>
+    </div>
+
+    <div id="detail-layer" class="layer" hidden>
+      <div class="layer-backdrop" data-close-detail></div>
+      <aside class="drawer detail-drawer" aria-label="Listing details">
+        <div class="drawer-heading"><div><p class="eyebrow">Listing</p><h2 id="detail-title">Details</h2></div><button class="icon-button" data-close-detail aria-label="Close details">×</button></div>
+        <div id="detail-content"></div>
+      </aside>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
+

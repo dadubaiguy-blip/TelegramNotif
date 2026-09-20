@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">TelegramNotif</string>
+    <string name="notification_channel_name">Telegram listings</string>
+    <string name="notification_channel_description">Urgent listing alerts from the TelegramNotif backend</string>
+</resources>
