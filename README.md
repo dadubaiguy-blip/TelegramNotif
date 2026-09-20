@@ -36,7 +36,9 @@ The GitHub Actions workflow at `.github/workflows/android-apk.yml` builds a debu
 `android/` or when started manually. Download the `TelegramNotif-debug-apk` artifact from the
 workflow run. See [`android/README.md`](android/README.md) for setup and phone/emulator URLs.
 
-The APK can optionally run the backend locally through Termux on the same phone. When this public
+The APK can optionally run the backend locally through Termux on the same phone. Its setup window
+shows live command output, estimated overall progress and time remaining, plus download speed when
+Git, apt, or pip reports it. When this public
 repository is not present, the app clones it into `$HOME/TelegramNotif`; on later app launches it
 fast-forwards the `main` branch, refreshes Python dependencies when needed, and restarts the backend
 only when the revision changed. Local `.env`, Telegram session, database, and media files are kept.
@@ -104,8 +106,10 @@ Image understanding is opt-in with `AI_ENABLE_VISION=true`; images are still sto
 the app even when vision is off. Telegram albums are buffered briefly and become one notification
 with one combined text payload and an image gallery. Individual non-album images are supported too.
 
-Messages without prices still notify by default and display `Price not listed`. To skip them instead,
-set `NOTIFY_ONLY_WITH_PRICE=true` or enable the switch in Settings.
+Messages are always stored for troubleshooting, but notifications are created only for newly
+arriving, priced game listings. Accounts, giveaways, contests, news, chatter, unknown posts, and
+unpriced posts are excluded. Prices are used as an eligibility signal but omitted from the Android
+notification text.
 
 ## Frontend contract
 

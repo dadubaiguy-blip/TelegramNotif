@@ -7,7 +7,7 @@ from typing import Any
 from .ai import GapGPTClient
 from .database import Database
 from .notifications import NotificationHub
-from .parser import apply_watchlist
+from .parser import apply_watchlist, is_game_sale_listing
 
 
 def _as_iso(value: Any) -> str | None:
@@ -57,14 +57,11 @@ class MessageProcessor:
         self.notify_only_with_price_default = notify_only_with_price
 
     def only_notify_with_price(self) -> bool:
-        stored = self.db.get_setting("notifications.only_with_price")
-        if stored is None:
-            return self.notify_only_with_price_default
-        return stored == "1"
+        return True
 
     def set_only_notify_with_price(self, value: bool) -> bool:
-        self.db.set_setting("notifications.only_with_price", "1" if value else "0")
-        return value
+        self.db.set_setting("notifications.only_with_price", "1")
+        return True
 
     def notification_click_target(self) -> str:
         return self.db.get_setting("notifications.click_target") or "app"
@@ -174,22 +171,20 @@ class MessageProcessor:
             )
             updated_rows.append(updated)
 
-        # Messages are retained, but this keeps unpriced chatter out of the notification feed.
-        if self.only_notify_with_price() and not _has_price(parsed):
+        # Keep all messages for review, but alert only for identified, priced game-sale posts.
+        # This deliberately excludes accounts, giveaways, news, chatter, and unknown content.
+        if not is_game_sale_listing(parsed, combined_text) or not _has_price(parsed):
             return None
 
         primary = updated_rows[0]
         item_names = parsed.get("item_names") or []
         item_label = ", ".join(str(item) for item in item_names[:3]) or "New listing"
-        price = parsed.get("price")
-        currency = parsed.get("currency")
-        price_label = f"{price} {currency or ''}".strip() if price else "Price not listed"
         availability = parsed.get("availability", "unknown")
         handles = ", ".join(parsed.get("contact_handles") or []) or "No contact detected"
         album_label = f" · {len(updated_rows)} images" if len(updated_rows) > 1 else ""
         title = f"{'URGENT: ' if urgent else ''}{item_label}{album_label}"
         body = (
-            f"{price_label} · {availability}\n"
+            f"Game listing · {availability}\n"
             f"DM: {handles}\n"
             f"Source: @{channel['source'].lstrip('@')}"
         )

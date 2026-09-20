@@ -64,7 +64,7 @@ class Settings:
             gapgpt_model=os.getenv("GAPGPT_MODEL") or None,
             gapgpt_vision_model=os.getenv("GAPGPT_VISION_MODEL") or None,
             ai_enable_vision=_bool_env("AI_ENABLE_VISION", False),
-            notify_only_with_price=_bool_env("NOTIFY_ONLY_WITH_PRICE", False),
+            notify_only_with_price=_bool_env("NOTIFY_ONLY_WITH_PRICE", True),
             ai_timeout_seconds=float(os.getenv("AI_TIMEOUT_SECONDS", "45")),
             start_telegram=_bool_env("START_TELEGRAM", True),
         )

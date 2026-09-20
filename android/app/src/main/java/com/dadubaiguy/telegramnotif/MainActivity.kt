@@ -4,7 +4,10 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -24,6 +27,7 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
@@ -31,12 +35,13 @@ import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.ArrayDeque
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
-    private enum class FeedFilter { ALL, GAMES, ACCOUNTS, URGENT }
+    private enum class FeedFilter { ALL, URGENT }
     private enum class StatusState { NEUTRAL, GOOD, ERROR }
 
     private lateinit var settings: SettingsStore
@@ -45,6 +50,12 @@ class MainActivity : Activity() {
     private lateinit var monitorButton: TextView
     private lateinit var resultCount: TextView
     private lateinit var notificationList: LinearLayout
+    private lateinit var setupCard: LinearLayout
+    private lateinit var setupPhaseText: TextView
+    private lateinit var setupPercentText: TextView
+    private lateinit var setupProgressBar: ProgressBar
+    private lateinit var setupMetaText: TextView
+    private lateinit var setupLatestLogText: TextView
 
     private lateinit var serverInput: EditText
     private lateinit var apiKeyInput: EditText
@@ -67,6 +78,33 @@ class MainActivity : Activity() {
     private var pendingNotificationId: Int? = null
     private var settingsDialog: Dialog? = null
     private var settingsStatusText: TextView? = null
+    private var setupDialog: Dialog? = null
+    private var setupDialogPhase: TextView? = null
+    private var setupDialogPercent: TextView? = null
+    private var setupDialogProgress: ProgressBar? = null
+    private var setupDialogMeta: TextView? = null
+    private var setupDialogLogs: TextView? = null
+    private var setupDialogLogScroll: ScrollView? = null
+    private val setupLogs = ArrayDeque<String>()
+    private var setupPercent = 0
+    private var setupPhase = "Waiting"
+    private var setupEtaSeconds = 0
+    private var setupElapsedSeconds = 0
+    private var setupSpeed = "Waiting for download data"
+    private var progressReceiverRegistered = false
+
+    private val setupProgressReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != TermuxBridge.ACTION_SETUP_PROGRESS) return
+            updateSetupProgress(
+                percent = intent.getIntExtra("percent", setupPercent),
+                phase = intent.getStringExtra("phase") ?: setupPhase,
+                elapsedSeconds = intent.getIntExtra("elapsed_seconds", setupElapsedSeconds),
+                etaSeconds = intent.getIntExtra("eta_seconds", setupEtaSeconds),
+                logLine = intent.getStringExtra("log").orEmpty(),
+            )
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +112,7 @@ class MainActivity : Activity() {
         pendingNotificationId = savedInstanceState?.getInt(EXTRA_NOTIFICATION_ID)
             ?: intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1).takeIf { it > 0 }
         buildMainUi()
+        registerSetupProgressReceiver()
         requestNotificationPermission()
         updateMonitorButton()
         if (settings.termuxAutoStart) startTermuxBackend(silent = true)
@@ -95,6 +134,11 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         settingsDialog?.dismiss()
+        setupDialog?.dismiss()
+        if (progressReceiverRegistered) {
+            unregisterReceiver(setupProgressReceiver)
+            progressReceiverRegistered = false
+        }
         executor.shutdownNow()
         super.onDestroy()
     }
@@ -125,6 +169,7 @@ class MainActivity : Activity() {
         setContentView(root)
 
         body.addView(buildStatusCard())
+        body.addView(buildSetupCard(), marginParams(top = 10))
         body.addView(label("Browse", 13f, palette("#667085"), true), marginParams(top = 22))
         body.addView(buildFilterRow(), marginParams(top = 8))
 
@@ -132,7 +177,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        feedHeader.addView(label("Latest listings", 21f, palette("#182230"), true), LinearLayout.LayoutParams(0, -2, 1f))
+        feedHeader.addView(label("Latest game listings", 21f, palette("#182230"), true), LinearLayout.LayoutParams(0, -2, 1f))
         resultCount = label("0 listings", 12f, palette("#667085"))
         feedHeader.addView(resultCount)
         body.addView(feedHeader, marginParams(top = 24))
@@ -201,16 +246,203 @@ class MainActivity : Activity() {
         return card
     }
 
+    private fun buildSetupCard(): View {
+        setupCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(13), dp(14), dp(13))
+            background = rounded(Color.WHITE, 16, palette("#DCE3F0"))
+            visibility = View.GONE
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        setupPhaseText = label("Preparing local backend", 14f, palette("#182230"), true)
+        header.addView(setupPhaseText, LinearLayout.LayoutParams(0, -2, 1f))
+        setupPercentText = label("0%", 13f, palette("#315EFB"), true)
+        header.addView(setupPercentText)
+        setupCard.addView(header)
+
+        setupProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressTintList = ColorStateList.valueOf(palette("#315EFB"))
+            progressBackgroundTintList = ColorStateList.valueOf(palette("#E7ECF4"))
+        }
+        setupCard.addView(setupProgressBar, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(10) })
+        setupMetaText = label("Estimated progress • waiting for Termux", 11f, palette("#667085"))
+        setupCard.addView(setupMetaText, marginParams(top = 9))
+        setupLatestLogText = label("", 11f, palette("#475467")).apply {
+            typeface = Typeface.MONOSPACE
+            maxLines = 2
+        }
+        setupCard.addView(setupLatestLogText, marginParams(top = 6))
+        setupCard.addView(actionButton("View setup logs", false) { showSetupDialog() }, marginParams(top = 9))
+        return setupCard
+    }
+
+    private fun registerSetupProgressReceiver() {
+        val filter = IntentFilter(TermuxBridge.ACTION_SETUP_PROGRESS)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(setupProgressReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(setupProgressReceiver, filter)
+        }
+        progressReceiverRegistered = true
+    }
+
+    private fun beginSetupProgress(showWindow: Boolean) {
+        setupLogs.clear()
+        setupPercent = 1
+        setupPhase = "Sending command to Termux"
+        setupEtaSeconds = 0
+        setupElapsedSeconds = 0
+        setupSpeed = "Waiting for download data"
+        setupCard.visibility = View.VISIBLE
+        refreshSetupViews()
+        if (showWindow) showSetupDialog()
+    }
+
+    private fun updateSetupProgress(
+        percent: Int,
+        phase: String,
+        elapsedSeconds: Int,
+        etaSeconds: Int,
+        logLine: String,
+    ) {
+        setupPercent = percent.coerceIn(0, 100)
+        setupPhase = phase
+        setupElapsedSeconds = elapsedSeconds.coerceAtLeast(0)
+        setupEtaSeconds = etaSeconds.coerceAtLeast(0)
+        val cleanLine = logLine.replace(ANSI_ESCAPE, "").trim()
+        DOWNLOAD_SPEED.find(cleanLine)?.value?.let { setupSpeed = it }
+        if (cleanLine.isNotBlank() && setupLogs.peekLast() != cleanLine) {
+            setupLogs.addLast(cleanLine)
+            while (setupLogs.size > 140) setupLogs.removeFirst()
+        }
+        setupCard.visibility = View.VISIBLE
+        refreshSetupViews()
+        when {
+            phase.equals("Setup failed", ignoreCase = true) -> {
+                status("Local setup failed • open logs", StatusState.ERROR)
+                termuxStatus("Setup failed. Open setup logs for the last reported command.")
+            }
+            setupPercent >= 100 -> {
+                settings.setupCompleted = true
+                status("Local backend ready", StatusState.GOOD)
+                termuxStatus("Local backend is ready")
+                window.decorView.postDelayed({ refreshListings() }, 1_500)
+            }
+            else -> status("Local setup • $setupPercent%", StatusState.NEUTRAL)
+        }
+    }
+
+    private fun refreshSetupViews() {
+        if (::setupPhaseText.isInitialized) setupPhaseText.text = setupPhase
+        if (::setupPercentText.isInitialized) setupPercentText.text = "$setupPercent%"
+        if (::setupProgressBar.isInitialized) setupProgressBar.progress = setupPercent
+        val eta = if (setupPercent >= 100) "complete" else if (setupEtaSeconds > 0) "ETA ~${formatDuration(setupEtaSeconds)}" else "calculating ETA"
+        val meta = "Elapsed ${formatDuration(setupElapsedSeconds)}  •  $eta  •  $setupSpeed"
+        if (::setupMetaText.isInitialized) setupMetaText.text = meta
+        if (::setupLatestLogText.isInitialized) setupLatestLogText.text = setupLogs.peekLast().orEmpty()
+        setupDialogPhase?.text = setupPhase
+        setupDialogPercent?.text = "$setupPercent%"
+        setupDialogProgress?.progress = setupPercent
+        setupDialogMeta?.text = meta
+        setupDialogLogs?.text = if (setupLogs.isEmpty()) "Waiting for Termux output…" else setupLogs.joinToString("\n")
+        setupDialogLogScroll?.post { setupDialogLogScroll?.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun showSetupDialog() {
+        setupDialog?.dismiss()
+        val dialog = Dialog(this)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        setupDialog = dialog
+        val shell = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = rounded(Color.WHITE, 20)
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val heading = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        heading.addView(label("Local setup", 21f, palette("#182230"), true))
+        val dialogPhase = label(setupPhase, 12f, palette("#667085"))
+        setupDialogPhase = dialogPhase
+        heading.addView(dialogPhase)
+        header.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
+        val dialogPercent = label("$setupPercent%", 17f, palette("#315EFB"), true)
+        setupDialogPercent = dialogPercent
+        header.addView(dialogPercent)
+        val close = label("×", 30f, palette("#475467")).apply {
+            gravity = Gravity.CENTER
+            setOnClickListener { dialog.dismiss() }
+        }
+        header.addView(close, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(8) })
+        shell.addView(header)
+
+        val dialogProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = setupPercent
+            progressTintList = ColorStateList.valueOf(palette("#315EFB"))
+            progressBackgroundTintList = ColorStateList.valueOf(palette("#E7ECF4"))
+        }
+        setupDialogProgress = dialogProgress
+        shell.addView(dialogProgress, LinearLayout.LayoutParams(-1, dp(9)).apply { topMargin = dp(12) })
+        val dialogMeta = label("", 11f, palette("#667085"))
+        setupDialogMeta = dialogMeta
+        shell.addView(dialogMeta, marginParams(top = 9))
+        shell.addView(label("Live output", 12f, palette("#344054"), true), marginParams(top = 14))
+
+        val dialogLogs = label("", 10f, palette("#D5D9E2")).apply {
+            typeface = Typeface.MONOSPACE
+            setPadding(dp(12), dp(11), dp(12), dp(11))
+            background = rounded(palette("#182230"), 12)
+            setTextIsSelectable(true)
+        }
+        setupDialogLogs = dialogLogs
+        val logScroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(dialogLogs)
+        }
+        setupDialogLogScroll = logScroll
+        shell.addView(logScroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(7) })
+        shell.addView(actionButton("Open Termux", false) { openTermux() }, marginParams(top = 10))
+
+        dialog.setContentView(shell)
+        dialog.setOnDismissListener {
+            setupDialogPhase = null
+            setupDialogPercent = null
+            setupDialogProgress = null
+            setupDialogMeta = null
+            setupDialogLogs = null
+            setupDialogLogScroll = null
+            if (setupDialog === dialog) setupDialog = null
+        }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes = attributes.apply { dimAmount = 0.42f }
+            setLayout(
+                (resources.displayMetrics.widthPixels * 0.94f).roundToInt(),
+                (resources.displayMetrics.heightPixels * 0.82f).roundToInt(),
+            )
+        }
+        refreshSetupViews()
+    }
+
     private fun buildFilterRow(): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         val entries = listOf(
-            FeedFilter.ALL to "All",
-            FeedFilter.GAMES to "Games",
-            FeedFilter.ACCOUNTS to "Accounts",
-            FeedFilter.URGENT to "Urgent",
+            FeedFilter.ALL to "All games",
+            FeedFilter.URGENT to "Watchlist",
         )
         entries.forEachIndexed { index, (filter, title) ->
             val chip = label(title, 12f, palette("#475467"), true).apply {
@@ -300,8 +532,10 @@ class MainActivity : Activity() {
         ai.addView(modelChoices, marginParams(top = 5))
         form.addView(ai, marginParams(top = 10))
 
-        val notifications = settingsSection("Notifications", "Control filtering and what happens when you tap")
-        onlyPricedCheck = checkBox("Notify only when AI finds a price", settings.onlyPriced)
+        val notifications = settingsSection("Notifications", "Only new, priced game listings can alert you")
+        onlyPricedCheck = checkBox("Priced games only • giveaways and other posts are blocked", true).apply {
+            isEnabled = false
+        }
         notifications.addView(onlyPricedCheck, marginParams(top = 7))
         notifications.addView(label("Notification tap action", 12f, palette("#667085"), true), marginParams(top = 7))
         clickTargetGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
@@ -427,13 +661,14 @@ class MainActivity : Activity() {
             try {
                 val items = ApiClient(settings).getNotifications(unreadOnly = false)
                 runOnUiThread {
-                    latestItems = items.take(100)
+                    val gameItems = items.filter(ListingRules::isEligibleGame).take(100)
+                    latestItems = gameItems
                     renderNotifications()
                     pendingNotificationId?.let { id ->
-                        items.firstOrNull { it.id == id }?.let(::showDetails)
+                        gameItems.firstOrNull { it.id == id }?.let(::showDetails)
                         pendingNotificationId = null
                     }
-                    status("Connected • ${items.size} listings", StatusState.GOOD)
+                    status("Connected • ${gameItems.size} game listings", StatusState.GOOD)
                 }
             } catch (error: Exception) {
                 runOnUiThread {
@@ -450,8 +685,6 @@ class MainActivity : Activity() {
         val filtered = latestItems.filter { item ->
             when (selectedFilter) {
                 FeedFilter.ALL -> true
-                FeedFilter.GAMES -> item.parsed.optString("category") == "game"
-                FeedFilter.ACCOUNTS -> item.parsed.optString("category") == "account"
                 FeedFilter.URGENT -> item.urgent
             }
         }
@@ -464,7 +697,7 @@ class MainActivity : Activity() {
                 background = rounded(Color.WHITE, 16, palette("#E4E7EC"))
             }
             empty.addView(label("Nothing here yet", 16f, palette("#344054"), true).apply { gravity = Gravity.CENTER })
-            empty.addView(label("New matching Telegram listings will appear here.", 12f, palette("#667085")).apply {
+            empty.addView(label("Only new priced game posts will appear here.", 12f, palette("#667085")).apply {
                 gravity = Gravity.CENTER
                 setPadding(0, dp(5), 0, 0)
             })
@@ -643,8 +876,10 @@ class MainActivity : Activity() {
 
     private fun startTermuxBackend(silent: Boolean) {
         saveLocalFields()
+        beginSetupProgress(showWindow = !silent || !settings.setupCompleted)
         if (!TermuxBridge.isInstalled(this)) {
             termuxStatus("Termux is not installed. Tap Open Termux to install it.")
+            updateSetupProgress(0, "Setup failed", 0, 0, "Termux is not installed")
             if (!silent) toast("Install Termux first")
             return
         }
@@ -654,13 +889,20 @@ class MainActivity : Activity() {
                 TermuxBridge.launch(this, settings.termuxProjectPath)
                 runOnUiThread {
                     termuxStatus("Command sent. The first setup can take a few minutes.")
-                    status("Starting local backend…", StatusState.NEUTRAL)
+                    status("Local setup • waiting for output", StatusState.NEUTRAL)
                     if (!silent) toast("Termux startup command sent")
                     window.decorView.postDelayed({ refreshListings() }, 8_000)
                 }
             } catch (error: Exception) {
                 runOnUiThread {
                     termuxStatus("Termux rejected the command. Enable allow-external-apps=true.")
+                    updateSetupProgress(
+                        setupPercent,
+                        "Setup failed",
+                        setupElapsedSeconds,
+                        0,
+                        "Termux rejected the command. Enable allow-external-apps=true.",
+                    )
                     status("Termux start failed: ${shortError(error)}", StatusState.ERROR)
                 }
             }
@@ -721,7 +963,7 @@ class MainActivity : Activity() {
         settings.textModel = textModelInput.text.toString()
         settings.visionModel = visionModelInput.text.toString()
         settings.visionEnabled = visionCheck.isChecked
-        settings.onlyPriced = onlyPricedCheck.isChecked
+        settings.onlyPriced = true
         settings.clickTarget = if (clickTargetGroup.checkedRadioButtonId == TELEGRAM_ID) "telegram" else "app"
         settings.termuxProjectPath = termuxPathInput.text.toString().ifBlank { SettingsStore.DEFAULT_TERMUX_PROJECT_PATH }
         settings.termuxAutoStart = termuxAutoStartCheck.isChecked
@@ -836,6 +1078,13 @@ class MainActivity : Activity() {
         return value.replace('T', ' ').substringBefore('.').take(16)
     }
 
+    private fun formatDuration(seconds: Int): String {
+        val safe = seconds.coerceAtLeast(0)
+        val minutes = safe / 60
+        val remainder = safe % 60
+        return if (minutes > 0) "%d:%02d".format(minutes, remainder) else "${remainder}s"
+    }
+
     private fun shortError(error: Throwable): String = error.message?.lineSequence()?.firstOrNull()?.take(90) ?: "unknown error"
     private fun toast(value: String) = Toast.makeText(this, value, Toast.LENGTH_SHORT).show()
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
@@ -846,5 +1095,9 @@ class MainActivity : Activity() {
         private const val VIEW_APP_ID = 1001
         private const val TELEGRAM_ID = 1002
         private const val NOTIFICATION_PERMISSION_REQUEST = 44
+        private val DOWNLOAD_SPEED = Regex(
+            """(?i)\b\d+(?:[.,]\d+)?\s*(?:[kmgt]i?b|bytes?)/s\b""",
+        )
+        private val ANSI_ESCAPE = Regex("\u001B\\[[;\\d]*[ -/]*[@-~]")
     }
 }

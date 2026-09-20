@@ -41,6 +41,7 @@ async def test_processor_persists_and_notifies_without_ai(tmp_path: Path):
 
     assert event is not None
     assert event["urgent"] is True
+    assert "$50" not in event["body"]
     messages = db.list_messages()
     assert len(messages) == 1
     assert db.parse_json(messages[0]["parsed_json"])["item_names"] == ["GTA 6"]
@@ -48,7 +49,7 @@ async def test_processor_persists_and_notifies_without_ai(tmp_path: Path):
     db.close()
 
 
-async def test_missing_price_still_notifies_by_default(tmp_path: Path):
+async def test_missing_price_is_stored_but_does_not_notify(tmp_path: Path):
     settings = Settings(
         database_path=tmp_path / "app.db",
         media_dir=tmp_path / "media",
@@ -79,8 +80,51 @@ async def test_missing_price_still_notifies_by_default(tmp_path: Path):
         text="GTA 6\nDM @seller",
     )
 
-    assert event is not None
-    assert "Price not listed" in event["body"]
+    assert event is None
+    assert len(db.list_messages()) == 1
+    assert len(db.list_notifications()) == 0
+    db.close()
+
+
+async def test_giveaway_and_account_posts_do_not_notify(tmp_path: Path):
+    settings = Settings(
+        database_path=tmp_path / "app.db",
+        media_dir=tmp_path / "media",
+        telegram_api_id=None,
+        telegram_api_hash=None,
+        telegram_session=str(tmp_path / "telegram"),
+        gapgpt_base_url=None,
+        gapgpt_api_key=None,
+        gapgpt_model=None,
+        gapgpt_vision_model=None,
+        ai_enable_vision=False,
+        notify_only_with_price=False,
+        ai_timeout_seconds=2,
+        start_telegram=False,
+    )
+    settings.ensure_directories()
+    db = Database(settings.database_path)
+    db.initialize()
+    channel = db.get_channel_by_source("XCrack_Land0")
+    assert channel is not None
+    processor = MessageProcessor(
+        db, GapGPTClient(settings, db), NotificationHub(), settings.media_dir
+    )
+
+    giveaway = await processor.process(
+        channel=channel,
+        telegram_message_id=125,
+        text="GTA 6 giveaway! Price: $50 DM @seller",
+    )
+    account = await processor.process(
+        channel=channel,
+        telegram_message_id=126,
+        text="Xbox account\nPrice: $50\nDM @seller",
+    )
+
+    assert giveaway is None
+    assert account is None
+    assert len(db.list_notifications()) == 0
     db.close()
 
 

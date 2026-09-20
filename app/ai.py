@@ -24,12 +24,14 @@ Return only a JSON object with these keys:
   "contact_handles": [string],
   "seller_name": string | null,
   "summary": string,
-  "confidence": number
+  "confidence": number,
+  "is_giveaway": boolean
 }
 
 Use the original spelling for item names and preserve @ handles. A price is only a price when
 the message labels it as a price/cost or supplies a currency; numbers in names such as GTA 6
 are not prices. A handle that is a bot or channel may still be included if it is the only contact.
+Set is_giveaway=true for giveaways, contests, raffles, prizes, or free promotional offers.
 """
 
 VISION_SYSTEM_PROMPT = """You are the image-reading stage of a Telegram game-listing watcher.

@@ -51,6 +51,11 @@ class NotificationMonitorService : Service() {
 
             for (item in pending) {
                 if (item.id <= currentSettings.lastNotificationId) continue
+                if (!ListingRules.isEligibleGame(item)) {
+                    currentSettings.lastNotificationId = item.id
+                    runCatching { client.markNotificationRead(item.id) }
+                    continue
+                }
                 showListingNotification(client, item)
                 currentSettings.lastNotificationId = item.id
                 runCatching { client.markNotificationRead(item.id) }

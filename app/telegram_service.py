@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ class TelegramService:
         self._handler: Any = None
         self._album_buffers: dict[tuple[int, int], list[Any]] = {}
         self._album_tasks: dict[tuple[int, int], asyncio.Task[Any]] = {}
+        self._listener_started_at: datetime | None = None
 
     @property
     def configured(self) -> bool:
@@ -60,6 +62,9 @@ class TelegramService:
             if not chats:
                 logger.warning("No Telegram channels resolved; listener is idle")
             else:
+                # Telethon normally emits only NewMessage updates. The timestamp cutoff is an
+                # extra guard against queued updates being replayed after a reconnect.
+                self._listener_started_at = datetime.now(UTC).replace(microsecond=0)
                 self._handler = events.NewMessage(chats=chats)
                 self.client.add_event_handler(self._on_new_message, self._handler)
             logger.info("Telegram listener connected; watching %d channels", len(chats))
@@ -91,6 +96,7 @@ class TelegramService:
         chats = await self._resolve_enabled_channels()
         self._handler = None
         if chats:
+            self._listener_started_at = datetime.now(UTC).replace(microsecond=0)
             self._handler = events.NewMessage(chats=chats)
             self.client.add_event_handler(self._on_new_message, self._handler)
         return len(chats)
@@ -230,6 +236,17 @@ class TelegramService:
 
     async def _on_new_message(self, event: Any) -> None:
         try:
+            posted_at = getattr(event.message, "date", None)
+            if posted_at is not None and self._listener_started_at is not None:
+                if posted_at.tzinfo is None:
+                    posted_at = posted_at.replace(tzinfo=UTC)
+                if posted_at < self._listener_started_at:
+                    logger.info(
+                        "Ignoring pre-start Telegram message %s from chat %s",
+                        getattr(event.message, "id", "unknown"),
+                        getattr(event, "chat_id", "unknown"),
+                    )
+                    return
             grouped_id = getattr(event.message, "grouped_id", None)
             if grouped_id is not None:
                 await self._queue_album(event, int(grouped_id))

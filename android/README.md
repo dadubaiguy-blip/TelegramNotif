@@ -28,6 +28,8 @@ run completes.
    Open TelegramNotif and use the small gear icon to enable **Start and update through Termux**.
    The app installs Git if needed, clones this repository to
    `/data/data/com.termux/files/home/TelegramNotif`, and updates it on future launches.
+   A setup window displays live logs, estimated percentage and time remaining, and download speed
+   whenever the command-line downloader reports one.
 3. After the first clone, configure `.env` and complete `python scripts/auth_telegram.py` once in
    Termux. These local credentials, the Telegram session, and the `data/` folder are not overwritten
    by repository updates.
@@ -38,8 +40,10 @@ run completes.
 6. Join private Telegram channels with the account used by the backend session. Use **Find joined**
    I joined** or add a numeric `-100...` channel ID.
 7. Tap **Start alerts**. The app uses a foreground service to poll unread notifications every 15
-   seconds and shows high-importance local notifications, including the first album image. All album
-   images are shown in the in-app detail view.
+   seconds and shows high-importance local notifications, including the first album image. Only
+   messages received after the Telegram listener starts are processed. Only priced game listings
+   notify; accounts, giveaways, contests, chatter, and unrelated posts are blocked. All album images
+   are shown in the in-app detail view.
 
 The service can restart after reboot when it has been enabled. Android still controls notification
 permission, sound, alarm, lock-screen, and Do Not Disturb behavior; an APK cannot silently override

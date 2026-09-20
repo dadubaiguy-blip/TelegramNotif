@@ -6,6 +6,7 @@ from typing import Any
 HANDLE_RE = re.compile(r"(?<!\w)@[A-Za-z0-9_]{3,64}")
 PRICE_RE = re.compile(
     r"(?P<label>price|قیمت|cost|fee)?\s*[:=]?\s*"
+    r"(?P<prefix>\$|€|£)?\s*"
     r"(?P<amount>[\d][\d,\.\s]*)\s*"
     r"(?P<currency>تومان|تومن|ریال|دلار|ریال|irr|irt|tomans?|usd|eur|\$|€|£)?",
     re.IGNORECASE,
@@ -23,6 +24,20 @@ SOLD_MARKERS = (
 BUY_MARKERS = ("خرید", "خریدار", "buy", "wanted")
 ACCOUNT_MARKERS = ("account", "اکانت", "حساب", "اکانـت")
 GAME_MARKERS = ("game", "بازی", "gta", "fc ", "fifa", "xbox", "ps4", "ps5", "steam")
+GIVEAWAY_MARKERS = (
+    "giveaway",
+    "give away",
+    "free giveaway",
+    "win a copy",
+    "contest",
+    "raffle",
+    "قرعه کشی",
+    "قرعه‌کشی",
+    "قرعهکشی",
+    "جایزه",
+    "رایگان",
+    "هدیه",
+)
 
 
 def _clean_line(line: str) -> str:
@@ -45,7 +60,7 @@ def _unique(values: list[str]) -> list[str]:
 def _extract_price(text: str) -> tuple[str | None, str | None]:
     for match in PRICE_RE.finditer(text):
         amount = re.sub(r"\s+", "", match.group("amount"))
-        currency = (match.group("currency") or "").strip()
+        currency = (match.group("prefix") or match.group("currency") or "").strip()
         label = (match.group("label") or "").strip()
         # Do not mistake the number in a title such as "GTA 6" for a price.
         if currency or label:
@@ -106,6 +121,7 @@ def heuristic_extract(text: str) -> dict[str, Any]:
         "seller_name": None,
         "summary": " ".join(items[:3]) if items else normalized[:180].strip(),
         "confidence": 0.35,
+        "is_giveaway": any(marker in lower for marker in GIVEAWAY_MARKERS),
     }
 
 
@@ -130,6 +146,9 @@ def normalize_ai_result(value: Any, original_text: str) -> dict[str, Any]:
     availability = value.get("availability", "unknown")
     if availability not in {"available", "sold", "unknown"}:
         availability = fallback["availability"]
+    giveaway_value = value.get("is_giveaway", fallback["is_giveaway"])
+    if isinstance(giveaway_value, str):
+        giveaway_value = giveaway_value.strip().casefold() in {"1", "true", "yes"}
     result = {
         "category": category,
         "item_names": _unique([str(item).strip() for item in item_names if str(item).strip()]),
@@ -140,12 +159,25 @@ def normalize_ai_result(value: Any, original_text: str) -> dict[str, Any]:
         "seller_name": value.get("seller_name") or value.get("seller") or None,
         "summary": str(value.get("summary") or fallback["summary"])[:500],
         "confidence": value.get("confidence", 0.7),
+        "is_giveaway": bool(giveaway_value),
     }
     if not result["item_names"]:
         result["item_names"] = fallback["item_names"]
     if not result["contact_handles"]:
         result["contact_handles"] = fallback["contact_handles"]
     return result
+
+
+def is_game_sale_listing(parsed: dict[str, Any], original_text: str) -> bool:
+    """Return true only for an identified, priced-sale-shaped game listing."""
+    text = (original_text or "").casefold()
+    if parsed.get("category") != "game":
+        return False
+    if not parsed.get("item_names"):
+        return False
+    if bool(parsed.get("is_giveaway")):
+        return False
+    return not any(marker in text for marker in GIVEAWAY_MARKERS)
 
 
 def apply_watchlist(parsed: dict[str, Any], text: str, watchlist: list[str]) -> dict[str, Any]:

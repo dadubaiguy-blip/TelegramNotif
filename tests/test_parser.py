@@ -1,4 +1,4 @@
-from app.parser import apply_watchlist, heuristic_extract, normalize_ai_result
+from app.parser import apply_watchlist, heuristic_extract, is_game_sale_listing, normalize_ai_result
 
 SAMPLE = """GTA 6 !!!!!!
 GTA 5
@@ -33,3 +33,16 @@ def test_normalize_ai_result_accepts_aliases():
     )
     assert parsed["item_names"] == ["GTA VI"]
     assert parsed["contact_handles"] == ["@seller"]
+
+
+def test_giveaway_is_not_a_game_sale_listing():
+    text = "GTA 6 giveaway — Price: $50"
+    parsed = heuristic_extract(text)
+    assert parsed["is_giveaway"] is True
+    assert is_game_sale_listing(parsed, text) is False
+
+
+def test_price_prefix_is_detected():
+    parsed = heuristic_extract("GTA 6\nPrice: $50\nDM @seller")
+    assert parsed["price"] == "50"
+    assert parsed["currency"] == "$"
