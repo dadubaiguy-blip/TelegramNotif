@@ -29,5 +29,16 @@ object ListingRules {
             price.toString().trim().lowercase() !in missingPrices
     }
 
+    fun dedupKey(item: ListingNotification): String {
+        item.parsed.optString("listing_fingerprint").takeIf { it.isNotBlank() }?.let { return it }
+        val names = item.parsed.optJSONArray("item_names")
+        val normalizedNames = buildList {
+            if (names != null) {
+                for (index in 0 until names.length()) add(names.optString(index).trim().lowercase())
+            }
+        }.sorted().joinToString("|")
+        return "$normalizedNames|${item.parsed.optString("price").trim().lowercase()}"
+    }
+
     private val missingPrices = setOf("", "none", "null", "unknown", "n/a", "not found")
 }

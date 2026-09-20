@@ -180,3 +180,115 @@ async def test_album_creates_one_notification_with_all_images(tmp_path: Path):
     assert len(db.list_notifications()) == 1
     assert len(db.list_album_messages("123:9001")) == 2
     db.close()
+
+
+async def test_same_listing_from_two_channels_notifies_once(tmp_path: Path):
+    settings = Settings(
+        database_path=tmp_path / "app.db",
+        media_dir=tmp_path / "media",
+        telegram_api_id=None,
+        telegram_api_hash=None,
+        telegram_session=str(tmp_path / "telegram"),
+        gapgpt_base_url=None,
+        gapgpt_api_key=None,
+        gapgpt_model=None,
+        gapgpt_vision_model=None,
+        ai_enable_vision=False,
+        notify_only_with_price=True,
+        ai_timeout_seconds=2,
+        start_telegram=False,
+    )
+    settings.ensure_directories()
+    db = Database(settings.database_path)
+    db.initialize()
+    first_channel = db.get_channel_by_source("XCrack_Land0")
+    second_channel = db.get_channel_by_source("centraljdj")
+    assert first_channel is not None and second_channel is not None
+    processor = MessageProcessor(
+        db, GapGPTClient(settings, db), NotificationHub(), settings.media_dir
+    )
+
+    first = await processor.process(
+        channel=first_channel,
+        telegram_message_id=900,
+        text="FC 27 Ultimate Edition\nPrice: $70\nDM @seller\nSource: @XCrack_Land0",
+    )
+    duplicate = await processor.process(
+        channel=second_channel,
+        telegram_message_id=901,
+        text="FC 27 Ultimate Edition\nPrice: $70\nDM @seller\nSource: @centraljdj",
+    )
+
+    assert first is not None
+    assert duplicate is None
+    assert len(db.list_notifications()) == 1
+    assert len(db.list_messages()) == 2
+    db.close()
+
+
+async def test_price_reply_reuses_referenced_album_images(tmp_path: Path):
+    settings = Settings(
+        database_path=tmp_path / "app.db",
+        media_dir=tmp_path / "media",
+        telegram_api_id=None,
+        telegram_api_hash=None,
+        telegram_session=str(tmp_path / "telegram"),
+        gapgpt_base_url=None,
+        gapgpt_api_key=None,
+        gapgpt_model=None,
+        gapgpt_vision_model=None,
+        ai_enable_vision=False,
+        notify_only_with_price=True,
+        ai_timeout_seconds=2,
+        start_telegram=False,
+    )
+    settings.ensure_directories()
+    (settings.media_dir / "reply-1.jpg").write_bytes(b"first image")
+    (settings.media_dir / "reply-2.jpg").write_bytes(b"second image")
+    db = Database(settings.database_path)
+    db.initialize()
+    channel = db.get_channel_by_source("XCrack_Land0")
+    assert channel is not None
+    processor = MessageProcessor(
+        db, GapGPTClient(settings, db), NotificationHub(), settings.media_dir
+    )
+
+    original = [
+        {
+            "telegram_message_id": 300,
+            "text": "GTA 6 Ultimate Edition",
+            "media_path": "reply-1.jpg",
+            "media_mime": "image/jpeg",
+        },
+        {
+            "telegram_message_id": 301,
+            "text": "",
+            "media_path": "reply-2.jpg",
+            "media_mime": "image/jpeg",
+        },
+    ]
+    assert await processor.process_album(
+        channel=channel,
+        album_id="123:reply-album",
+        items=original,
+    ) is None
+
+    event = await processor.process_album(
+        channel=channel,
+        album_id="123:reply-album",
+        items=[
+            {
+                "telegram_message_id": 302,
+                "text": "Price: $60 DM @seller",
+            },
+            *original,
+        ],
+        primary_telegram_message_id=302,
+    )
+
+    assert event is not None
+    assert event["message"]["telegram_message_id"] == 302
+    assert event["message"]["album_count"] == 3
+    assert len(event["message"]["media_urls"]) == 2
+    assert len(db.list_notifications()) == 1
+    db.close()

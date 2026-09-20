@@ -7,8 +7,11 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.graphics.Bitmap
+import android.media.AudioAttributes
 import android.net.Uri
+import android.os.Build
 import android.os.IBinder
+import android.media.RingtoneManager
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -49,9 +52,15 @@ class NotificationMonitorService : Service() {
                 return
             }
 
+            val seenThisPoll = mutableSetOf<String>()
             for (item in pending) {
                 if (item.id <= currentSettings.lastNotificationId) continue
                 if (!ListingRules.isEligibleGame(item)) {
+                    currentSettings.lastNotificationId = item.id
+                    runCatching { client.markNotificationRead(item.id) }
+                    continue
+                }
+                if (!seenThisPoll.add(ListingRules.dedupKey(item))) {
                     currentSettings.lastNotificationId = item.id
                     runCatching { client.markNotificationRead(item.id) }
                     continue
@@ -66,6 +75,8 @@ class NotificationMonitorService : Service() {
     }
 
     private fun showListingNotification(client: ApiClient, item: ListingNotification) {
+        val manager = getSystemService(NotificationManager::class.java)
+        createNotificationChannels()
         val openIntent = if (item.clickTarget == "telegram" && item.telegramUrl != null) {
             Intent(Intent.ACTION_VIEW, Uri.parse(item.telegramUrl))
         } else {
@@ -83,24 +94,34 @@ class NotificationMonitorService : Service() {
         val fullText = listOf(item.body, item.text.takeIf { it.isNotBlank() })
             .filterNotNull()
             .joinToString("\n")
-        val builder = Notification.Builder(this, ALERT_CHANNEL_ID)
+        val channelId = when {
+            item.urgent && manager.isNotificationPolicyAccessGranted -> URGENT_DND_CHANNEL_ID
+            item.urgent -> URGENT_CHANNEL_ID
+            else -> ALERT_CHANNEL_ID
+        }
+        val builder = Notification.Builder(this, channelId)
             .setSmallIcon(com.dadubaiguy.telegramnotif.R.drawable.ic_stat_notify)
             .setContentTitle(item.title)
             .setContentText(item.body)
             .setStyle(Notification.BigTextStyle().bigText(fullText))
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .setCategory(Notification.CATEGORY_ALARM)
-            .setPriority(Notification.PRIORITY_MAX)
+            .setCategory(if (item.urgent) Notification.CATEGORY_ALARM else Notification.CATEGORY_MESSAGE)
+            .setPriority(if (item.urgent) Notification.PRIORITY_MAX else Notification.PRIORITY_HIGH)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
+
+        if (item.urgent && (Build.VERSION.SDK_INT < 34 || manager.canUseFullScreenIntent())) {
+            builder.setFullScreenIntent(pendingIntent, true)
+        }
 
         val firstImage = item.mediaUrls.firstOrNull()?.let { runCatching { client.fetchBitmap(it) }.getOrNull() }
         if (firstImage != null) {
             builder.setStyle(Notification.BigPictureStyle().bigPicture(firstImage))
         }
         val notification = builder.build()
-        getSystemService(NotificationManager::class.java).notify(item.id, notification)
+        manager.notify(item.id, notification)
     }
 
     private fun serviceNotification(): Notification = Notification.Builder(this, SERVICE_CHANNEL_ID)
@@ -128,6 +149,41 @@ class NotificationMonitorService : Service() {
         alertChannel.description = getString(R.string.notification_channel_description)
         alertChannel.enableVibration(true)
         manager.createNotificationChannel(alertChannel)
+
+        val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        val alarmAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        val urgentChannel = NotificationChannel(
+            URGENT_CHANNEL_ID,
+            "Watchlist alarms",
+            NotificationManager.IMPORTANCE_HIGH,
+        ).apply {
+            description = "Urgent multilingual watchlist matches"
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 900, 250, 900, 250, 1200)
+            setSound(alarmSound, alarmAttributes)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+        manager.createNotificationChannel(urgentChannel)
+
+        if (manager.isNotificationPolicyAccessGranted) {
+            val dndChannel = NotificationChannel(
+                URGENT_DND_CHANNEL_ID,
+                "Watchlist alarms • DND allowed",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Urgent watchlist alarms allowed through Do Not Disturb"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 900, 250, 900, 250, 1200)
+                setSound(alarmSound, alarmAttributes)
+                setBypassDnd(true)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            }
+            manager.createNotificationChannel(dndChannel)
+        }
     }
 
     companion object {
@@ -135,5 +191,7 @@ class NotificationMonitorService : Service() {
         private const val SERVICE_NOTIFICATION_ID = 11
         private const val SERVICE_CHANNEL_ID = "telegramnotif_service"
         private const val ALERT_CHANNEL_ID = "telegramnotif_alerts"
+        private const val URGENT_CHANNEL_ID = "telegramnotif_watchlist_alarm_v1"
+        private const val URGENT_DND_CHANNEL_ID = "telegramnotif_watchlist_alarm_dnd_v1"
     }
 }

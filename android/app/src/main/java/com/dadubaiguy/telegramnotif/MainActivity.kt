@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
+import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -17,6 +18,7 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings as AndroidSettings
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
@@ -63,6 +65,9 @@ class MainActivity : Activity() {
     private lateinit var visionModelInput: EditText
     private lateinit var visionCheck: CheckBox
     private lateinit var onlyPricedCheck: CheckBox
+    private lateinit var alarmAccessText: TextView
+    private lateinit var watchlistInput: EditText
+    private lateinit var watchlistContainer: LinearLayout
     private lateinit var clickTargetGroup: RadioGroup
     private lateinit var modelChoices: TextView
     private lateinit var channelsText: TextView
@@ -125,6 +130,11 @@ class MainActivity : Activity() {
         setIntent(intent)
         pendingNotificationId = intent?.getIntExtra(EXTRA_NOTIFICATION_ID, -1)?.takeIf { it > 0 }
         refreshListings()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateAlarmAccessStatus()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -537,6 +547,18 @@ class MainActivity : Activity() {
             isEnabled = false
         }
         notifications.addView(onlyPricedCheck, marginParams(top = 7))
+        alarmAccessText = label("", 11f, palette("#667085"))
+        notifications.addView(alarmAccessText, marginParams(top = 7))
+        notifications.addView(
+            actionButton("Allow alarms through DND", false) { openDndAccessSettings() },
+            marginParams(top = 7),
+        )
+        if (Build.VERSION.SDK_INT >= 34) {
+            notifications.addView(
+                actionButton("Allow full-screen urgent alarms", false) { openFullScreenAlarmSettings() },
+                marginParams(top = 7),
+            )
+        }
         notifications.addView(label("Notification tap action", 12f, palette("#667085"), true), marginParams(top = 7))
         clickTargetGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
         val openApp = radioButton("Open listing inside TelegramNotif", VIEW_APP_ID)
@@ -546,6 +568,17 @@ class MainActivity : Activity() {
         clickTargetGroup.check(if (settings.clickTarget == "telegram") TELEGRAM_ID else VIEW_APP_ID)
         notifications.addView(clickTargetGroup)
         form.addView(notifications, marginParams(top = 10))
+
+        val watchlist = settingsSection(
+            "Alarm watchlist",
+            "Aliases match across English, Persian script, and Persian/Arabic digits",
+        )
+        watchlistInput = input("Game name, for example FC 27", "")
+        watchlist.addView(watchlistInput, marginParams(top = 9))
+        watchlist.addView(actionButton("Add alarm keyword", false) { addWatchlistItem() }, marginParams(top = 7))
+        watchlistContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        watchlist.addView(watchlistContainer, marginParams(top = 7))
+        form.addView(watchlist, marginParams(top = 10))
 
         val channels = settingsSection("Channels", "Public usernames and private channels joined by the backend account")
         val channelActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -597,7 +630,100 @@ class MainActivity : Activity() {
                 (resources.displayMetrics.heightPixels * 0.90f).roundToInt(),
             )
         }
+        updateAlarmAccessStatus()
+        loadWatchlist()
         loadChannels()
+    }
+
+    private fun loadWatchlist() {
+        if (!::watchlistContainer.isInitialized) return
+        executor.execute {
+            try {
+                val items = ApiClient(settings).getWatchlist()
+                runOnUiThread {
+                    watchlistContainer.removeAllViews()
+                    if (items.isEmpty()) {
+                        watchlistContainer.addView(label("No alarm keywords yet", 11f, palette("#667085")))
+                    } else {
+                        items.forEach { item ->
+                            val row = LinearLayout(this).apply {
+                                orientation = LinearLayout.HORIZONTAL
+                                gravity = Gravity.CENTER_VERTICAL
+                            }
+                            row.addView(label(item.name, 12f, palette("#344054"), true), LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+                                gravity = Gravity.CENTER_VERTICAL
+                            })
+                            row.addView(actionButton("Remove", false) { deleteWatchlistItem(item.id) }, LinearLayout.LayoutParams(-2, dp(38)))
+                            watchlistContainer.addView(row, marginParams(top = 5))
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    watchlistContainer.removeAllViews()
+                    watchlistContainer.addView(label("Watchlist unavailable: ${shortError(error)}", 11f, palette("#B42318")))
+                }
+            }
+        }
+    }
+
+    private fun addWatchlistItem() {
+        val name = watchlistInput.text.toString().trim()
+        if (name.isBlank()) {
+            toast("Enter a game name")
+            return
+        }
+        executor.execute {
+            runCatching { ApiClient(settings).addWatchlist(name) }
+                .onSuccess {
+                    runOnUiThread {
+                        watchlistInput.text.clear()
+                        loadWatchlist()
+                        status("Alarm keyword added", StatusState.GOOD)
+                    }
+                }
+                .onFailure { runOnUiThread { status("Watchlist failed: ${shortError(it)}", StatusState.ERROR) } }
+        }
+    }
+
+    private fun deleteWatchlistItem(id: Int) {
+        executor.execute {
+            runCatching { ApiClient(settings).deleteWatchlist(id) }
+                .onSuccess { runOnUiThread { loadWatchlist() } }
+                .onFailure { runOnUiThread { status("Remove failed: ${shortError(it)}", StatusState.ERROR) } }
+        }
+    }
+
+    private fun updateAlarmAccessStatus() {
+        if (!::alarmAccessText.isInitialized || settingsDialog?.isShowing != true) return
+        val manager = getSystemService(NotificationManager::class.java)
+        val dnd = if (manager.isNotificationPolicyAccessGranted) "DND access allowed" else "DND access needed"
+        val fullScreen = if (Build.VERSION.SDK_INT < 34 || manager.canUseFullScreenIntent()) {
+            "full-screen allowed"
+        } else {
+            "full-screen access needed"
+        }
+        alarmAccessText.text = "$dnd • $fullScreen. Android still requires your approval."
+    }
+
+    private fun openDndAccessSettings() {
+        runCatching {
+            startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+        }.onFailure { toast("Open Android Settings → Special access → Do Not Disturb") }
+    }
+
+    private fun openFullScreenAlarmSettings() {
+        if (Build.VERSION.SDK_INT < 34) return
+        val intent = Intent(
+            AndroidSettings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+            Uri.parse("package:$packageName"),
+        )
+        runCatching { startActivity(intent) }
+            .onFailure {
+                startActivity(
+                    Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")),
+                )
+            }
     }
 
     private fun testConnection() {
@@ -661,7 +787,10 @@ class MainActivity : Activity() {
             try {
                 val items = ApiClient(settings).getNotifications(unreadOnly = false)
                 runOnUiThread {
-                    val gameItems = items.filter(ListingRules::isEligibleGame).take(100)
+                    val gameItems = items
+                        .filter(ListingRules::isEligibleGame)
+                        .distinctBy(ListingRules::dedupKey)
+                        .take(100)
                     latestItems = gameItems
                     renderNotifications()
                     pendingNotificationId?.let { id ->

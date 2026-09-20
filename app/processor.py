@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -7,7 +10,46 @@ from typing import Any
 from .ai import GapGPTClient
 from .database import Database
 from .notifications import NotificationHub
-from .parser import apply_watchlist, is_game_sale_listing
+from .parser import apply_watchlist, is_game_sale_listing, normalize_watch_text
+
+URL_RE = re.compile(r"(?:https?://|t\.me/|telegram\.me/)\S+", re.IGNORECASE)
+MENTION_RE = re.compile(r"(?<!\w)@[A-Za-z0-9_]{3,64}")
+
+
+def _dedup_text(value: str) -> str:
+    lines: list[str] = []
+    for raw_line in (value or "").splitlines():
+        line = URL_RE.sub(" ", raw_line)
+        line = MENTION_RE.sub(" ", line)
+        normalized = normalize_watch_text(line)
+        if normalized in {"", "source", "channel", "bot", "telegram", "dm"}:
+            continue
+        lines.append(normalized)
+    return " ".join(lines)
+
+
+def _listing_fingerprint(
+    parsed: dict[str, Any], text: str, image_paths: list[Path]
+) -> str:
+    canonical_text = _dedup_text(text)
+    media_hashes: list[str] = []
+    if not canonical_text:
+        for path in image_paths:
+            try:
+                media_hashes.append(hashlib.sha256(path.read_bytes()).hexdigest())
+            except OSError:
+                continue
+    evidence = {
+        "items": sorted(
+            normalize_watch_text(str(item)) for item in parsed.get("item_names", []) if item
+        ),
+        "price": normalize_watch_text(str(parsed.get("price") or "")),
+        "currency": normalize_watch_text(str(parsed.get("currency") or "")),
+        "text": canonical_text,
+        "media": sorted(media_hashes),
+    }
+    encoded = json.dumps(evidence, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _as_iso(value: Any) -> str | None:
@@ -55,6 +97,16 @@ class MessageProcessor:
         self.hub = hub
         self.media_dir = media_dir
         self.notify_only_with_price_default = notify_only_with_price
+        self._seed_existing_fingerprints()
+
+    def _seed_existing_fingerprints(self) -> None:
+        for notification in self.db.list_notifications(limit=500):
+            payload = Database.parse_json(notification.get("payload_json"))
+            parsed = payload.get("parsed") if isinstance(payload.get("parsed"), dict) else {}
+            if not parsed:
+                continue
+            fingerprint = _listing_fingerprint(parsed, str(payload.get("text") or ""), [])
+            self.db.claim_listing_fingerprint(fingerprint, int(notification["message_id"]))
 
     def only_notify_with_price(self) -> bool:
         return True
@@ -113,6 +165,7 @@ class MessageProcessor:
         channel: dict[str, Any],
         album_id: str,
         items: list[dict[str, Any]],
+        primary_telegram_message_id: int | None = None,
     ) -> dict[str, Any] | None:
         rows: list[dict[str, Any]] = []
         for item in items:
@@ -131,12 +184,23 @@ class MessageProcessor:
             )
             if row:
                 rows.append(row)
-        if not rows:
-            rows = self.db.list_album_messages(album_id)
+        rows = self.db.list_album_messages(album_id)
         if not rows:
             return None
-        combined_text = "\n\n".join(row.get("text", "") for row in rows if row.get("text"))
-        image_paths = [self.media_dir / row["media_path"] for row in rows if row.get("media_path")]
+        if primary_telegram_message_id is not None:
+            rows.sort(
+                key=lambda row: int(row["telegram_message_id"]) != primary_telegram_message_id
+            )
+        combined_text = "\n\n".join(
+            str(item.get("text") or "") for item in items if item.get("text")
+        )
+        image_paths = list(
+            dict.fromkeys(
+                self.media_dir / str(item["media_path"])
+                for item in items
+                if item.get("media_path")
+            )
+        )
         return await self._finish(
             channel=channel,
             rows=rows,
@@ -158,6 +222,8 @@ class MessageProcessor:
         )
         watchlist = [item["name"] for item in self.db.list_watchlist(enabled_only=True)]
         parsed = apply_watchlist(parsed, combined_text, watchlist)
+        fingerprint = _listing_fingerprint(parsed, combined_text, image_paths)
+        parsed["listing_fingerprint"] = fingerprint
         if len(rows) > 1:
             parsed["album_count"] = len(rows)
         urgent = bool(parsed.get("urgent"))
@@ -177,6 +243,8 @@ class MessageProcessor:
             return None
 
         primary = updated_rows[0]
+        if not self.db.claim_listing_fingerprint(fingerprint, int(primary["id"])):
+            return None
         item_names = parsed.get("item_names") or []
         item_label = ", ".join(str(item) for item in item_names[:3]) or "New listing"
         availability = parsed.get("availability", "unknown")

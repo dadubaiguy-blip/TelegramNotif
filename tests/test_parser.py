@@ -1,4 +1,10 @@
-from app.parser import apply_watchlist, heuristic_extract, is_game_sale_listing, normalize_ai_result
+from app.parser import (
+    apply_watchlist,
+    heuristic_extract,
+    is_game_sale_listing,
+    normalize_ai_result,
+    normalize_watch_text,
+)
 
 SAMPLE = """GTA 6 !!!!!!
 GTA 5
@@ -46,3 +52,14 @@ def test_price_prefix_is_detected():
     parsed = heuristic_extract("GTA 6\nPrice: $50\nDM @seller")
     assert parsed["price"] == "50"
     assert parsed["currency"] == "$"
+
+
+def test_multilingual_watchlist_aliases_and_digits_match():
+    parsed = apply_watchlist(
+        {"item_names": ["آف سی ۲۷ التیمیت ادیشن"]},
+        "",
+        ["FC 27"],
+    )
+    assert parsed["urgent"] is True
+    assert parsed["matched_watchlist"] == ["FC 27"]
+    assert normalize_watch_text("FC27 Ultimate") == "fc 27 ultimate"

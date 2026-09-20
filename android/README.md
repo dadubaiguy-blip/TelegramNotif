@@ -17,7 +17,9 @@ The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
 The `Build Android APK` workflow runs on pushes that change `android/` and can also be started from
 the Actions tab with **Run workflow**. Download the `TelegramNotif-debug-apk` artifact after the
-run completes.
+run completes. Starting with version 0.4.0, GitHub Actions keeps a protected signing-key cache and
+refreshes it on a schedule so later APKs install over this stable baseline. Builds older than 0.4.0
+used temporary runner keys and may require one uninstall before installing 0.4.0.
 
 ## First launch
 
@@ -38,12 +40,20 @@ run completes.
    computer backend, use the computer's LAN address or an HTTPS URL.
 5. Enter the GapGPT key and text/vision model IDs, save, and test the connection.
 6. Join private Telegram channels with the account used by the backend session. Use **Find joined**
-   I joined** or add a numeric `-100...` channel ID.
+   or add a numeric `-100...` channel ID.
 7. Tap **Start alerts**. The app uses a foreground service to poll unread notifications every 15
    seconds and shows high-importance local notifications, including the first album image. Only
    messages received after the Telegram listener starts are processed. Only priced game listings
    notify; accounts, giveaways, contests, chatter, and unrelated posts are blocked. All album images
    are shown in the in-app detail view.
+8. Add game names under **Alarm watchlist**. English/Persian aliases and Persian/Arabic digits are
+   normalized, so an `FC 27` rule also matches forms such as `FC27` and `اف سی ۲۷ التیمیت`, whether
+   found in text or by the selected vision model. Use the two Android special-access buttons if you
+   want urgent matches to sound through DND and open full-screen while the device is locked.
+
+The backend suppresses repeat alerts using a persistent content fingerprint across all configured
+channels. If a new caption with price/details replies to an image or album, the backend downloads
+the referenced full album and analyzes it together with that new reply.
 
 The service can restart after reboot when it has been enabled. Android still controls notification
 permission, sound, alarm, lock-screen, and Do Not Disturb behavior; an APK cannot silently override

@@ -101,6 +101,12 @@ class Database:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS listing_fingerprints (
+                    fingerprint TEXT PRIMARY KEY,
+                    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS devices (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     token TEXT NOT NULL UNIQUE,
@@ -328,6 +334,38 @@ class Database:
             )
             self._commit()
             return self.get_message(message_id)
+
+    def attach_message_to_album(
+        self, channel_id: int, telegram_message_id: int, album_id: str
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            self.conn.execute(
+                """
+                UPDATE messages
+                SET album_id = ?
+                WHERE channel_id = ? AND telegram_message_id = ?
+                """,
+                (album_id, channel_id, telegram_message_id),
+            )
+            self._commit()
+            row = self.conn.execute(
+                "SELECT * FROM messages WHERE channel_id = ? AND telegram_message_id = ?",
+                (channel_id, telegram_message_id),
+            ).fetchone()
+            return self._row_dict(row)
+
+    def claim_listing_fingerprint(self, fingerprint: str, message_id: int) -> bool:
+        """Atomically claim a listing signature; false means it notified previously."""
+        with self._lock:
+            cursor = self.conn.execute(
+                """
+                INSERT OR IGNORE INTO listing_fingerprints(fingerprint, message_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (fingerprint, message_id, utc_now()),
+            )
+            self._commit()
+            return cursor.rowcount == 1
 
     def get_message(self, message_id: int) -> dict[str, Any] | None:
         with self._lock:

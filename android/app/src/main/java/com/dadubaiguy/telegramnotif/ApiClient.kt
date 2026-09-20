@@ -30,6 +30,11 @@ data class ChannelInfo(
     val displayName: String,
 )
 
+data class WatchlistItem(
+    val id: Int,
+    val name: String,
+)
+
 class ApiClient(private val settings: SettingsStore) {
     private val baseUrl: String
         get() = settings.serverUrl.trim().trimEnd('/')
@@ -91,6 +96,25 @@ class ApiClient(private val settings: SettingsStore) {
         val payload = JSONObject().put("source", source.trim())
         if (!displayName.isNullOrBlank()) payload.put("display_name", displayName.trim())
         request("POST", "/api/channels", payload.toString())
+    }
+
+    fun getWatchlist(): List<WatchlistItem> {
+        val payload = JSONArray(request("GET", "/api/watchlist"))
+        return buildList {
+            for (index in 0 until payload.length()) {
+                val item = payload.optJSONObject(index) ?: continue
+                val name = item.optString("name")
+                if (name.isNotBlank()) add(WatchlistItem(item.optInt("id"), name))
+            }
+        }
+    }
+
+    fun addWatchlist(name: String) {
+        request("POST", "/api/watchlist", JSONObject().put("name", name.trim()).toString())
+    }
+
+    fun deleteWatchlist(id: Int) {
+        request("DELETE", "/api/watchlist/$id")
     }
 
     fun fetchBitmap(path: String): Bitmap? {

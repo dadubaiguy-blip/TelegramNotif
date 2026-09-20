@@ -105,11 +105,18 @@ English/Persian heuristic parser. A provider error is retained as `processing_er
 Image understanding is opt-in with `AI_ENABLE_VISION=true`; images are still stored and exposed to
 the app even when vision is off. Telegram albums are buffered briefly and become one notification
 with one combined text payload and an image gallery. Individual non-album images are supported too.
+When a new price/details message replies to an older image or album, the listener loads the
+referenced media and analyzes the reply and complete album as one listing.
 
 Messages are always stored for troubleshooting, but notifications are created only for newly
 arriving, priced game listings. Accounts, giveaways, contests, news, chatter, unknown posts, and
 unpriced posts are excluded. Prices are used as an eligibility signal but omitted from the Android
-notification text.
+notification text. A persistent listing fingerprint prevents the same listing from alerting again
+when it is reposted in the same channel or copied to another watched channel.
+
+Alarm-watchlist matching normalizes Latin and Persian/Arabic digits and common Persian game-name
+transliterations. For example, `FC 27`, `FC27`, and `اف سی ۲۷ التیمیت` can trigger the same urgent
+watchlist rule, including when the vision model finds the title inside an image.
 
 ## Frontend contract
 

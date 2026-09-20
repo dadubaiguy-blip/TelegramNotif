@@ -2,6 +2,9 @@ name: Build Android APK
 
 on:
   workflow_dispatch:
+  schedule:
+    # Refresh the protected signing-key cache before GitHub's inactivity expiry.
+    - cron: "17 4 */5 * *"
   push:
     branches: [main]
     paths:
@@ -32,6 +35,42 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
+
+      - name: Restore stable APK signing key
+        id: signing-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/telegramnotif-signing
+          key: telegramnotif-stable-signing-v1
+
+      - name: Create stable APK signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          signing_dir="$HOME/.android/telegramnotif-signing"
+          mkdir -p "$signing_dir"
+          if [[ ! -f "$signing_dir/telegramnotif.jks" || ! -f "$signing_dir/signing.env" ]]; then
+            password="$(openssl rand -hex 24)"
+            keytool -genkeypair -v \
+              -keystore "$signing_dir/telegramnotif.jks" \
+              -storepass "$password" \
+              -keypass "$password" \
+              -alias telegramnotif \
+              -keyalg RSA -keysize 4096 -validity 10000 \
+              -dname "CN=TelegramNotif, OU=Personal, O=TelegramNotif, L=Local, C=US"
+            {
+              echo "TELEGRAMNOTIF_KEYSTORE_PASSWORD=$password"
+              echo "TELEGRAMNOTIF_KEY_PASSWORD=$password"
+            } > "$signing_dir/signing.env"
+            chmod 600 "$signing_dir/signing.env" "$signing_dir/telegramnotif.jks"
+          fi
+          source "$signing_dir/signing.env"
+          {
+            echo "TELEGRAMNOTIF_KEYSTORE_PATH=$signing_dir/telegramnotif.jks"
+            echo "TELEGRAMNOTIF_KEYSTORE_PASSWORD=$TELEGRAMNOTIF_KEYSTORE_PASSWORD"
+            echo "TELEGRAMNOTIF_KEY_ALIAS=telegramnotif"
+            echo "TELEGRAMNOTIF_KEY_PASSWORD=$TELEGRAMNOTIF_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
 
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug

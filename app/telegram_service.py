@@ -166,6 +166,74 @@ class TelegramService:
             logger.warning("Could not download media for message %s: %s", message.id, exc)
             return None, None
 
+    async def _reply_media_context(
+        self,
+        *,
+        message: Any,
+        chat: Any,
+        channel: dict[str, Any],
+        telegram_chat_id: int,
+        channel_title: str | None,
+        sender_handle: str | None,
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """Load the image or full album referenced by a new price/details reply."""
+        reply_id = getattr(message, "reply_to_msg_id", None)
+        if not reply_id:
+            return None, []
+        try:
+            getter = getattr(message, "get_reply_message", None)
+            replied = await getter() if getter else None
+            if replied is None:
+                replied = await self.client.get_messages(chat, ids=int(reply_id))
+            if replied is None:
+                return None, []
+            grouped_id = getattr(replied, "grouped_id", None)
+            if grouped_id is not None:
+                start = max(1, int(replied.id) - 20)
+                nearby = await self.client.get_messages(
+                    chat, ids=list(range(start, int(replied.id) + 21))
+                )
+                related = [
+                    candidate
+                    for candidate in nearby
+                    if candidate is not None
+                    and getattr(candidate, "grouped_id", None) == grouped_id
+                ]
+                album_id = f"{telegram_chat_id}:{int(grouped_id)}"
+            else:
+                related = [replied]
+                album_id = f"reply:{telegram_chat_id}:{int(replied.id)}"
+
+            items: list[dict[str, Any]] = []
+            for related_message in sorted(related, key=lambda item: int(item.id)):
+                media_path, media_mime = await self._download_media(
+                    related_message, int(channel["id"])
+                )
+                if not media_path:
+                    continue
+                items.append(
+                    {
+                        "telegram_message_id": int(related_message.id),
+                        "text": getattr(related_message, "message", "") or "",
+                        "channel_title": channel_title,
+                        "sender_handle": sender_handle,
+                        "posted_at": getattr(related_message, "date", None),
+                        "media_path": media_path,
+                        "media_mime": media_mime,
+                        "raw": {
+                            "telegram_chat_id": telegram_chat_id,
+                            "message_id": int(related_message.id),
+                            "grouped_id": getattr(related_message, "grouped_id", None),
+                            "has_media": True,
+                            "used_as_reply_context_for": int(message.id),
+                        },
+                    }
+                )
+            return (album_id, items) if items else (None, [])
+        except Exception as exc:  # noqa: BLE001 - a failed lookup must not drop the new reply.
+            logger.warning("Could not load reply media context for %s: %s", message.id, exc)
+            return None, []
+
     async def _queue_album(self, event: Any, grouped_id: int) -> None:
         key = (int(event.chat_id), int(grouped_id))
         events = self._album_buffers.setdefault(key, [])
@@ -231,6 +299,28 @@ class TelegramService:
                 items=items,
             )
         else:
+            reply_album_id, reply_items = await self._reply_media_context(
+                message=first_event.message,
+                chat=chat,
+                channel=channel,
+                telegram_chat_id=telegram_chat_id,
+                channel_title=title,
+                sender_handle=sender_handle,
+            )
+            if reply_album_id and reply_items:
+                for reply_item in reply_items:
+                    self.db.attach_message_to_album(
+                        int(channel["id"]),
+                        int(reply_item["telegram_message_id"]),
+                        reply_album_id,
+                    )
+                await self.processor.process_album(
+                    channel=channel,
+                    album_id=reply_album_id,
+                    items=[items[0], *reply_items],
+                    primary_telegram_message_id=int(first_event.message.id),
+                )
+                return
             item = items[0]
             await self.processor.process(channel=channel, **item)
 

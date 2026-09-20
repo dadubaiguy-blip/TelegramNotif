@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any
 
 HANDLE_RE = re.compile(r"(?<!\w)@[A-Za-z0-9_]{3,64}")
@@ -38,6 +39,33 @@ GIVEAWAY_MARKERS = (
     "رایگان",
     "هدیه",
 )
+
+DIGIT_TRANSLATION = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+WATCHLIST_ALIASES = (
+    ("جی تی ای", "gta"),
+    ("جیتیای", "gta"),
+    ("ایکس باکس", "xbox"),
+    ("پلی استیشن", "playstation"),
+    ("آف سی", "fc"),
+    ("اف سی", "fc"),
+    ("اِف سی", "fc"),
+    ("التیمیت", "ultimate"),
+    ("آلتیمیت", "ultimate"),
+    ("ادیشن", "edition"),
+    ("فیفا", "fifa"),
+)
+
+
+def normalize_watch_text(value: str) -> str:
+    """Normalize Latin/Persian aliases and digits for multilingual watchlist matching."""
+    text = unicodedata.normalize("NFKC", value or "").translate(DIGIT_TRANSLATION)
+    text = text.replace("ي", "ی").replace("ك", "ک")
+    text = re.sub(r"[\u200b\u200c\u200d\ufeff]", " ", text).casefold()
+    for source, replacement in WATCHLIST_ALIASES:
+        text = text.replace(source, f" {replacement} ")
+    text = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", text)
+    text = re.sub(r"[^\w]+", " ", text, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _clean_line(line: str) -> str:
@@ -80,6 +108,8 @@ def _candidate_items(lines: list[str], text: str) -> list[str]:
         if any(marker in lower for marker in SOLD_MARKERS + BUY_MARKERS):
             continue
         if re.search(r"\b(price|cost|fee)\b|قیمت", lower):
+            continue
+        if re.match(r"^(?:source|channel|bot|dm)\s*[:：]", lower):
             continue
         if any(token in lower for token in ("http://", "https://", "t.me/", "telegram.me/")):
             continue
@@ -181,8 +211,15 @@ def is_game_sale_listing(parsed: dict[str, Any], original_text: str) -> bool:
 
 
 def apply_watchlist(parsed: dict[str, Any], text: str, watchlist: list[str]) -> dict[str, Any]:
-    haystack = " ".join([text, *(str(item) for item in parsed.get("item_names", []))]).casefold()
-    matches = [name for name in watchlist if name.casefold() in haystack]
+    haystack = normalize_watch_text(
+        " ".join([text, *(str(item) for item in parsed.get("item_names", []))])
+    )
+    padded_haystack = f" {haystack} "
+    matches = [
+        name
+        for name in watchlist
+        if (needle := normalize_watch_text(name)) and f" {needle} " in padded_haystack
+    ]
     parsed = dict(parsed)
     parsed["matched_watchlist"] = _unique(matches)
     parsed["urgent"] = bool(matches)
