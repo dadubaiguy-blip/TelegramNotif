@@ -57,6 +57,7 @@ class GapGPTClient:
             "model": settings.gapgpt_model,
             "vision_model": settings.gapgpt_vision_model,
             "enable_vision": settings.ai_enable_vision,
+            "timeout_seconds": settings.ai_timeout_seconds,
         }
 
     def _get(self, key: str) -> Any:
@@ -76,6 +77,9 @@ class GapGPTClient:
             "model": self._get("model"),
             "vision_model": self._get("vision_model") or self._get("model"),
             "enable_vision": bool(self._get("enable_vision")),
+            "timeout_seconds": float(
+                self._get("timeout_seconds") or self.settings.ai_timeout_seconds
+            ),
         }
 
     def update_settings(
@@ -86,6 +90,7 @@ class GapGPTClient:
         model: str | None = None,
         vision_model: str | None = None,
         enable_vision: bool | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         # The key is deliberately never returned. It is stored in the local SQLite DB only
         # when entered through the settings API; use an environment variable for deployments.
@@ -100,6 +105,8 @@ class GapGPTClient:
                 self.db.set_setting(f"ai.{key}", value)
         if enable_vision is not None:
             self.db.set_setting("ai.enable_vision", "1" if enable_vision else "0")
+        if timeout_seconds is not None:
+            self.db.set_setting("ai.timeout_seconds", str(float(timeout_seconds)))
         return self.public_settings()
 
     def _connection(self) -> tuple[str, str]:
@@ -155,7 +162,10 @@ class GapGPTClient:
     async def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         api_key, base_url = self._connection()
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        timeout = httpx.Timeout(float(self.settings.ai_timeout_seconds), connect=15.0)
+        timeout_seconds = float(
+            self._get("timeout_seconds") or self.settings.ai_timeout_seconds
+        )
+        timeout = httpx.Timeout(timeout_seconds, connect=min(15.0, timeout_seconds))
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
                 f"{base_url}/chat/completions", headers=headers, json=payload

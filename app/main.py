@@ -22,6 +22,7 @@ from .schemas import (
     ChannelUpdate,
     DeviceRegistration,
     NotificationSettingsUpdate,
+    TelegramSettingsUpdate,
     WatchlistItem,
 )
 from .telegram_service import TelegramService
@@ -49,20 +50,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     telegram = TelegramService(settings, db, processor)
 
+    async def restart_telegram_listener() -> bool:
+        task = getattr(app.state, "telegram_task", None)
+        if task and not task.done():
+            await telegram.stop()
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if telegram.enabled and telegram.configured:
+            app.state.telegram_task = asyncio.create_task(
+                telegram.run(), name="telegram-listener"
+            )
+            return True
+        app.state.telegram_task = None
+        return False
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         task: asyncio.Task[Any] | None = None
-        if settings.start_telegram:
+        if telegram.enabled:
             task = asyncio.create_task(telegram.run(), name="telegram-listener")
         app.state.telegram_task = task
         try:
             yield
         finally:
+            current_task = getattr(app.state, "telegram_task", None)
             await telegram.stop()
-            if task:
-                task.cancel()
+            if current_task:
+                current_task.cancel()
                 try:
-                    await task
+                    await current_task
                 except asyncio.CancelledError:
                     pass
             db.close()
@@ -100,7 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ok": True,
             "service": "telegram-listing-watcher",
             "telegram": {
-                "configured": telegram.configured,
+                **telegram.public_settings(),
                 "task_running": bool(listener_task and not listener_task.done()),
             },
             "ai": ai.public_settings(),
@@ -179,6 +198,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def get_settings() -> dict[str, Any]:
         return {
             "ai": ai.public_settings(),
+            "telegram": telegram.public_settings(),
             "watchlist": db.list_watchlist(),
             "notifications": {
                 "only_notify_with_price": processor.only_notify_with_price(),
@@ -189,6 +209,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.put("/api/settings/ai")
     async def update_ai_settings(payload: AISettingsUpdate) -> dict[str, Any]:
         return ai.update_settings(**payload.model_dump(exclude_unset=True))
+
+    @app.put("/api/settings/telegram")
+    async def update_telegram_settings(payload: TelegramSettingsUpdate) -> dict[str, Any]:
+        result = telegram.update_settings(**payload.model_dump(exclude_unset=True))
+        result["task_started"] = await restart_telegram_listener()
+        return result
 
     @app.put("/api/settings/notifications")
     async def update_notification_settings(payload: NotificationSettingsUpdate) -> dict[str, Any]:
@@ -241,6 +267,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=400, detail="Telegram API credentials are not configured"
             )
         return {"resolved_channels": await telegram.reload_channels()}
+
+    @app.post("/api/telegram/restart")
+    async def restart_telegram() -> dict[str, Any]:
+        if not telegram.configured:
+            raise HTTPException(
+                status_code=400, detail="Telegram API credentials are not configured"
+            )
+        return {"task_started": await restart_telegram_listener()}
 
     @app.get("/api/telegram/dialogs")
     async def list_telegram_dialogs() -> list[dict[str, Any]]:

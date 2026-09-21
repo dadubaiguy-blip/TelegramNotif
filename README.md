@@ -42,8 +42,10 @@ Git, apt, or pip reports it. When this public
 repository is not present, the app clones it into `$HOME/TelegramNotif`; on later app launches it
 fast-forwards the `main` branch, refreshes Python dependencies when needed, and restarts the backend
 only when the revision changed. Local `.env`, Telegram session, database, and media files are kept.
-Termux and the one-time Telegram login still need to be installed/configured by the user; Android
-does not allow the APK to silently install another app or complete an account login.
+Telegram and GapGPT credentials, model choices, AI timeout, vision mode, channels, and alert options
+can be configured from the gear menu. Termux and the one-time interactive Telegram login still need
+user approval; Android does not allow the APK to silently install another app or complete an account
+login.
 
 The project belongs in Termux's private home at `$HOME/TelegramNotif`. Do not move its Python
 environment to shared Android storage: shared storage does not provide the Unix executable and
@@ -52,9 +54,12 @@ several minutes around 68%; the app now emits heartbeat logs while packages are 
 
 ## Telegram setup
 
-1. Create Telegram API credentials at `https://my.telegram.org` and put `TELEGRAM_API_ID` and
-   `TELEGRAM_API_HASH` in `.env`.
-2. Log in once with the user account that can see the channels:
+1. Create your own Telegram API credentials at `https://my.telegram.org`. In the Android app, open
+   the gear menu, enter the API ID and API hash under **Telegram account**, then tap
+   **Save credentials and log in**. The values are saved in the backend's local database and override
+   `.env` values.
+2. Complete the one-time login in the Termux window using the Telegram account that can see the
+   channels. The equivalent manual command is:
 
    ```bash
    python scripts/auth_telegram.py
@@ -63,7 +68,8 @@ several minutes around 68%; the app now emits heartbeat logs while packages are 
 3. Start the API. The listener uses the saved user session and begins watching the seeded sources.
 
 For the two private channels, join them in Telegram using the account behind the session first, then
-add their numeric Telegram chat IDs (or a username if the private channel has one):
+add each full numeric Telegram chat ID beginning with `-100` (or a username if it has one). The
+numeric ID is enough; an invite link or channel API key is not required after the account has joined:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/channels \
@@ -71,15 +77,16 @@ curl -X POST http://127.0.0.1:8000/api/channels \
   -d '{"source":"-1001234567890","display_name":"Private channel 1"}'
 ```
 
-The app's **Settings → Private channels → Find channels I joined** button lists channels visible to
-the authorized Telegram account. Select either private channel there. The API reloads the listener
-after adding or changing a channel. It does not auto-join invite links.
+The app's **Settings → Channels → Find joined channels** button lists channels visible to the
+authorized Telegram account. You can select a private channel there or paste its `-100...` ID.
+The API reloads the listener after adding or changing a channel. It does not auto-join invite links.
 Keep `data/telegram.session` private; it represents a logged-in Telegram session.
 
 ## GapGPT setup
 
-The adapter calls an OpenAI-compatible `/chat/completions` endpoint. Set the exact base URL, API key,
-and model supplied by the GapGPT account in `.env`, for example:
+The adapter calls an OpenAI-compatible `/chat/completions` endpoint. The exact base URL, API key,
+text model, vision model, vision toggle, and timeout can all be saved in the Android gear menu.
+They can alternatively be provided in `.env`, for example:
 
 ```dotenv
 GAPGPT_BASE_URL=https://your-gapgpt-endpoint.example/v1
@@ -97,6 +104,8 @@ The app also exposes settings endpoints:
 
 - `GET /api/settings`
 - `PUT /api/settings/ai` with `{ "api_key": "...", "base_url": "...", "model": "..." }`
+- `PUT /api/settings/telegram` with `{ "api_id": 123, "api_hash": "...", "enabled": true }`
+- `POST /api/telegram/restart`
 - `GET /api/ai/models`
 - `POST /api/ai/test`
 - `PUT /api/settings/notifications` with `click_target: "app" | "telegram"`

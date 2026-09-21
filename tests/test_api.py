@@ -61,3 +61,34 @@ def test_notification_settings_round_trip(tmp_path: Path):
         )
         assert response.status_code == 200
         assert response.json() == {"only_notify_with_price": True, "click_target": "telegram"}
+
+
+def test_app_managed_telegram_and_ai_settings(tmp_path: Path):
+    with make_client(tmp_path) as client:
+        telegram = client.put(
+            "/api/settings/telegram",
+            json={"api_id": 123456, "api_hash": "example-api-hash", "enabled": False},
+        )
+        assert telegram.status_code == 200
+        assert telegram.json()["configured"] is True
+        assert telegram.json()["api_hash_set"] is True
+        assert telegram.json()["enabled"] is False
+
+        ai = client.put(
+            "/api/settings/ai",
+            json={
+                "base_url": "https://example.test/v1",
+                "api_key": "secret",
+                "model": "text-model",
+                "vision_model": "vision-model",
+                "enable_vision": True,
+                "timeout_seconds": 75,
+            },
+        )
+        assert ai.status_code == 200
+        assert ai.json()["timeout_seconds"] == 75
+
+        settings = client.get("/api/settings").json()
+        assert settings["telegram"]["api_id"] == 123456
+        assert settings["telegram"]["api_hash_set"] is True
+        assert settings["ai"]["base_url"] == "https://example.test/v1"

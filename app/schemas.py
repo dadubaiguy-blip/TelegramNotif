@@ -42,6 +42,13 @@ class AISettingsUpdate(BaseModel):
     model: str | None = Field(default=None, max_length=255)
     vision_model: str | None = Field(default=None, max_length=255)
     enable_vision: bool | None = None
+    timeout_seconds: float | None = Field(default=None, ge=5, le=300)
+
+
+class TelegramSettingsUpdate(BaseModel):
+    api_id: int | None = Field(default=None, gt=0)
+    api_hash: str | None = Field(default=None, min_length=8, max_length=255)
+    enabled: bool | None = None
 
 
 class NotificationSettingsUpdate(BaseModel):

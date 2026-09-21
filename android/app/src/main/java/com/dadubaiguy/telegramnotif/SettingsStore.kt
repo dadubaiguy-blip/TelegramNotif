@@ -13,6 +13,26 @@ class SettingsStore(context: Context) {
         get() = preferences.getString(KEY_API_KEY, "") ?: ""
         set(value) = preferences.edit().putString(KEY_API_KEY, value).apply()
 
+    var gapGptBaseUrl: String
+        get() = preferences.getString(KEY_GAPGPT_BASE_URL, "") ?: ""
+        set(value) = preferences.edit().putString(KEY_GAPGPT_BASE_URL, value.trim().trimEnd('/')).apply()
+
+    var telegramApiId: String
+        get() = preferences.getString(KEY_TELEGRAM_API_ID, "") ?: ""
+        set(value) = preferences.edit().putString(KEY_TELEGRAM_API_ID, value.trim()).apply()
+
+    var telegramApiHash: String
+        get() = preferences.getString(KEY_TELEGRAM_API_HASH, "") ?: ""
+        set(value) = preferences.edit().putString(KEY_TELEGRAM_API_HASH, value.trim()).apply()
+
+    var telegramEnabled: Boolean
+        get() = preferences.getBoolean(KEY_TELEGRAM_ENABLED, true)
+        set(value) = preferences.edit().putBoolean(KEY_TELEGRAM_ENABLED, value).apply()
+
+    var aiTimeoutSeconds: String
+        get() = preferences.getString(KEY_AI_TIMEOUT_SECONDS, "45") ?: "45"
+        set(value) = preferences.edit().putString(KEY_AI_TIMEOUT_SECONDS, value.trim()).apply()
+
     var textModel: String
         get() = preferences.getString(KEY_TEXT_MODEL, "") ?: ""
         set(value) = preferences.edit().putString(KEY_TEXT_MODEL, value.trim()).apply()
@@ -69,6 +89,11 @@ class SettingsStore(context: Context) {
         const val DEFAULT_SERVER_URL = "http://127.0.0.1:8000"
         private const val KEY_SERVER_URL = "server_url"
         private const val KEY_API_KEY = "api_key"
+        private const val KEY_GAPGPT_BASE_URL = "gapgpt_base_url"
+        private const val KEY_TELEGRAM_API_ID = "telegram_api_id"
+        private const val KEY_TELEGRAM_API_HASH = "telegram_api_hash"
+        private const val KEY_TELEGRAM_ENABLED = "telegram_enabled"
+        private const val KEY_AI_TIMEOUT_SECONDS = "ai_timeout_seconds"
         private const val KEY_TEXT_MODEL = "text_model"
         private const val KEY_VISION_MODEL = "vision_model"
         private const val KEY_VISION_ENABLED = "vision_enabled"

@@ -60,9 +60,14 @@ class MainActivity : Activity() {
     private lateinit var setupLatestLogText: TextView
 
     private lateinit var serverInput: EditText
+    private lateinit var telegramApiIdInput: EditText
+    private lateinit var telegramApiHashInput: EditText
+    private lateinit var telegramEnabledCheck: CheckBox
+    private lateinit var gapGptBaseUrlInput: EditText
     private lateinit var apiKeyInput: EditText
     private lateinit var textModelInput: EditText
     private lateinit var visionModelInput: EditText
+    private lateinit var aiTimeoutInput: EditText
     private lateinit var visionCheck: CheckBox
     private lateinit var onlyPricedCheck: CheckBox
     private lateinit var alarmAccessText: TextView
@@ -528,13 +533,37 @@ class MainActivity : Activity() {
         connection.addView(actionButton("Test connection", false) { testConnection() }, marginParams(top = 8))
         form.addView(connection, marginParams(top = 8))
 
-        val ai = settingsSection("GapGPT", "Choose the text and image models used for listings")
+        val telegram = settingsSection(
+            "Telegram account",
+            "Your own API credentials from my.telegram.org; private -100 IDs are supported",
+        )
+        telegramApiIdInput = input("Telegram API ID", settings.telegramApiId)
+        telegramApiHashInput = input("Telegram API hash", settings.telegramApiHash, password = true)
+        telegramEnabledCheck = checkBox("Watch Telegram channels", settings.telegramEnabled)
+        telegram.addView(telegramApiIdInput, marginParams(top = 9))
+        telegram.addView(telegramApiHashInput, marginParams(top = 8))
+        telegram.addView(telegramEnabledCheck, marginParams(top = 5))
+        telegram.addView(
+            actionButton("Save credentials and log in", false) { beginTelegramLogin() },
+            marginParams(top = 7),
+        )
+        telegram.addView(
+            label("Login opens Termux once for your phone number, code and optional 2FA password.", 11f, palette("#667085")),
+            marginParams(top = 6),
+        )
+        form.addView(telegram, marginParams(top = 10))
+
+        val ai = settingsSection("GapGPT", "Configure the API endpoint and text/image models")
+        gapGptBaseUrlInput = input("GapGPT base URL", settings.gapGptBaseUrl)
         apiKeyInput = input("GapGPT API key", settings.apiKey, password = true)
         textModelInput = input("Text model ID", settings.textModel)
         visionModelInput = input("Vision model ID", settings.visionModel)
-        ai.addView(apiKeyInput, marginParams(top = 9))
+        aiTimeoutInput = input("AI timeout in seconds", settings.aiTimeoutSeconds)
+        ai.addView(gapGptBaseUrlInput, marginParams(top = 9))
+        ai.addView(apiKeyInput, marginParams(top = 8))
         ai.addView(textModelInput, marginParams(top = 8))
         ai.addView(visionModelInput, marginParams(top = 8))
+        ai.addView(aiTimeoutInput, marginParams(top = 8))
         visionCheck = checkBox("Analyze images before text extraction", settings.visionEnabled)
         ai.addView(visionCheck, marginParams(top = 5))
         ai.addView(actionButton("Load available models", false) { loadModels() }, marginParams(top = 6))
@@ -631,8 +660,41 @@ class MainActivity : Activity() {
             )
         }
         updateAlarmAccessStatus()
+        loadBackendConfiguration()
         loadWatchlist()
         loadChannels()
+    }
+
+    private fun loadBackendConfiguration() {
+        executor.execute {
+            runCatching { ApiClient(settings).getSettings() }
+                .onSuccess { payload ->
+                    runOnUiThread {
+                        val telegram = payload.optJSONObject("telegram")
+                        val ai = payload.optJSONObject("ai")
+                        if (telegramApiIdInput.text.isBlank()) {
+                            telegram?.optLong("api_id")?.takeIf { it > 0 }
+                                ?.let { telegramApiIdInput.setText(it.toString()) }
+                        }
+                        if (telegram?.optBoolean("api_hash_set", false) == true && telegramApiHashInput.text.isBlank()) {
+                            telegramApiHashInput.hint = "Telegram API hash already saved"
+                        }
+                        telegram?.let { telegramEnabledCheck.isChecked = it.optBoolean("enabled", true) }
+                        if (gapGptBaseUrlInput.text.isBlank()) {
+                            ai?.optString("base_url")?.takeIf { it.isNotBlank() && it != "null" }
+                                ?.let(gapGptBaseUrlInput::setText)
+                        }
+                        if (apiKeyInput.text.isBlank() && ai?.optBoolean("api_key_set", false) == true) {
+                            apiKeyInput.hint = "GapGPT API key already saved"
+                        }
+                        if (textModelInput.text.isBlank()) ai?.optString("model")?.takeIf { it.isNotBlank() }?.let(textModelInput::setText)
+                        if (visionModelInput.text.isBlank()) ai?.optString("vision_model")?.takeIf { it.isNotBlank() }?.let(visionModelInput::setText)
+                        ai?.optDouble("timeout_seconds")?.takeIf { it >= 5 }
+                            ?.let { aiTimeoutInput.setText(it.toInt().toString()) }
+                        ai?.let { visionCheck.isChecked = it.optBoolean("enable_vision", false) }
+                    }
+                }
+        }
     }
 
     private fun loadWatchlist() {
@@ -751,7 +813,19 @@ class MainActivity : Activity() {
         executor.execute {
             try {
                 val client = ApiClient(settings)
-                client.updateAiSettings(settings.apiKey, settings.textModel, settings.visionModel, settings.visionEnabled)
+                client.updateTelegramSettings(
+                    settings.telegramApiId,
+                    settings.telegramApiHash,
+                    settings.telegramEnabled,
+                )
+                client.updateAiSettings(
+                    settings.apiKey,
+                    settings.gapGptBaseUrl,
+                    settings.textModel,
+                    settings.visionModel,
+                    settings.visionEnabled,
+                    settings.aiTimeoutSeconds.toDoubleOrNull() ?: 45.0,
+                )
                 client.updateNotificationSettings(settings.onlyPriced, settings.clickTarget)
                 runOnUiThread {
                     status("Settings saved", StatusState.GOOD)
@@ -769,7 +843,16 @@ class MainActivity : Activity() {
         status("Loading model list…", StatusState.NEUTRAL)
         executor.execute {
             try {
-                val models = ApiClient(settings).getModels()
+                val client = ApiClient(settings)
+                client.updateAiSettings(
+                    settings.apiKey,
+                    settings.gapGptBaseUrl,
+                    settings.textModel,
+                    settings.visionModel,
+                    settings.visionEnabled,
+                    settings.aiTimeoutSeconds.toDoubleOrNull() ?: 45.0,
+                )
+                val models = client.getModels()
                 runOnUiThread {
                     modelChoices.text = if (models.isEmpty()) "No models returned" else models.joinToString("  •  ")
                     if (models.size == 1 && textModelInput.text.isBlank()) textModelInput.setText(models.first())
@@ -777,6 +860,37 @@ class MainActivity : Activity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread { status("Model list failed: ${shortError(error)}", StatusState.ERROR) }
+            }
+        }
+    }
+
+    private fun beginTelegramLogin() {
+        saveLocalFields()
+        if (settings.telegramApiId.toLongOrNull() == null || settings.telegramApiHash.isBlank()) {
+            status("Enter your Telegram API ID and API hash first", StatusState.ERROR)
+            return
+        }
+        status("Saving Telegram credentials…", StatusState.NEUTRAL)
+        executor.execute {
+            try {
+                ApiClient(settings).updateTelegramSettings(
+                    settings.telegramApiId,
+                    settings.telegramApiHash,
+                    settings.telegramEnabled,
+                )
+                runOnUiThread {
+                    try {
+                        TermuxBridge.launchTelegramLogin(this, settings.termuxProjectPath)
+                        status("Complete Telegram login in Termux", StatusState.NEUTRAL)
+                        toast("Enter your Telegram login details in Termux")
+                    } catch (error: Exception) {
+                        status("Could not open Telegram login: ${shortError(error)}", StatusState.ERROR)
+                    }
+                }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    status("Start the backend first: ${shortError(error)}", StatusState.ERROR)
+                }
             }
         }
     }
@@ -1088,9 +1202,14 @@ class MainActivity : Activity() {
     private fun saveLocalFields() {
         if (settingsDialog?.isShowing != true || !::serverInput.isInitialized) return
         settings.serverUrl = serverInput.text.toString().ifBlank { SettingsStore.DEFAULT_SERVER_URL }
+        settings.telegramApiId = telegramApiIdInput.text.toString()
+        settings.telegramApiHash = telegramApiHashInput.text.toString()
+        settings.telegramEnabled = telegramEnabledCheck.isChecked
+        settings.gapGptBaseUrl = gapGptBaseUrlInput.text.toString()
         settings.apiKey = apiKeyInput.text.toString()
         settings.textModel = textModelInput.text.toString()
         settings.visionModel = visionModelInput.text.toString()
+        settings.aiTimeoutSeconds = aiTimeoutInput.text.toString().ifBlank { "45" }
         settings.visionEnabled = visionCheck.isChecked
         settings.onlyPriced = true
         settings.clickTarget = if (clickTargetGroup.checkedRadioButtonId == TELEGRAM_ID) "telegram" else "app"

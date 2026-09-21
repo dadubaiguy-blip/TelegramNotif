@@ -58,16 +58,27 @@ class ApiClient(private val settings: SettingsStore) {
 
     fun updateAiSettings(
         apiKey: String,
+        baseUrl: String,
         textModel: String,
         visionModel: String,
         enableVision: Boolean,
+        timeoutSeconds: Double,
     ) {
         val payload = JSONObject()
         if (apiKey.isNotBlank()) payload.put("api_key", apiKey)
+        if (baseUrl.isNotBlank()) payload.put("base_url", baseUrl)
         if (textModel.isNotBlank()) payload.put("model", textModel)
         if (visionModel.isNotBlank()) payload.put("vision_model", visionModel)
         payload.put("enable_vision", enableVision)
+        payload.put("timeout_seconds", timeoutSeconds)
         request("PUT", "/api/settings/ai", payload.toString())
+    }
+
+    fun updateTelegramSettings(apiId: String, apiHash: String, enabled: Boolean): JSONObject {
+        val payload = JSONObject().put("enabled", enabled)
+        apiId.trim().toLongOrNull()?.let { payload.put("api_id", it) }
+        if (apiHash.isNotBlank()) payload.put("api_hash", apiHash.trim())
+        return JSONObject(request("PUT", "/api/settings/telegram", payload.toString()))
     }
 
     fun updateNotificationSettings(onlyPriced: Boolean, clickTarget: String) {

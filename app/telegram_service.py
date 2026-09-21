@@ -34,9 +34,59 @@ class TelegramService:
 
     @property
     def configured(self) -> bool:
-        return bool(self.settings.telegram_api_id and self.settings.telegram_api_hash)
+        return bool(self.api_id and self.api_hash)
+
+    @property
+    def api_id(self) -> int | None:
+        stored = self.db.get_setting("telegram.api_id")
+        if stored:
+            try:
+                return int(stored)
+            except ValueError:
+                return None
+        return self.settings.telegram_api_id
+
+    @property
+    def api_hash(self) -> str | None:
+        return self.db.get_setting("telegram.api_hash") or self.settings.telegram_api_hash
+
+    @property
+    def enabled(self) -> bool:
+        stored = self.db.get_setting("telegram.enabled")
+        return self.settings.start_telegram if stored is None else stored == "1"
+
+    def public_settings(self) -> dict[str, Any]:
+        return {
+            "configured": self.configured,
+            "api_id": self.api_id,
+            "api_hash_set": bool(self.api_hash),
+            "enabled": self.enabled,
+            "session": self.settings.telegram_session,
+        }
+
+    def update_settings(
+        self,
+        *,
+        api_id: int | None = None,
+        api_hash: str | None = None,
+        enabled: bool | None = None,
+    ) -> dict[str, Any]:
+        if api_id is not None:
+            self.db.set_setting("telegram.api_id", str(api_id))
+            self.settings.telegram_api_id = api_id
+        if api_hash is not None and api_hash.strip():
+            cleaned_hash = api_hash.strip()
+            self.db.set_setting("telegram.api_hash", cleaned_hash)
+            self.settings.telegram_api_hash = cleaned_hash
+        if enabled is not None:
+            self.db.set_setting("telegram.enabled", "1" if enabled else "0")
+            self.settings.start_telegram = enabled
+        return self.public_settings()
 
     async def run(self) -> None:
+        if not self.enabled:
+            logger.warning("Telegram listener disabled in app settings")
+            return
         if not self.configured:
             logger.warning("Telegram listener disabled: TELEGRAM_API_ID/HASH are not configured")
             return
@@ -48,8 +98,8 @@ class TelegramService:
 
         self.client = TelegramClient(
             self.settings.telegram_session,
-            self.settings.telegram_api_id,
-            self.settings.telegram_api_hash,
+            self.api_id,
+            self.api_hash,
         )
         try:
             await self.client.connect()
@@ -76,6 +126,7 @@ class TelegramService:
         finally:
             if self.client:
                 await self.client.disconnect()
+                self.client = None
 
     async def stop(self) -> None:
         for task in self._album_tasks.values():
@@ -83,7 +134,9 @@ class TelegramService:
         self._album_tasks.clear()
         self._album_buffers.clear()
         if self.client:
-            await self.client.disconnect()
+            client = self.client
+            self.client = None
+            await client.disconnect()
 
     async def reload_channels(self) -> int:
         """Refresh the chat filter after the API adds/enables a channel."""
@@ -134,11 +187,27 @@ class TelegramService:
     async def _resolve_enabled_channels(self) -> list[int]:
         resolved: list[int] = []
         assert self.client is not None
+        dialog_entities: dict[int, Any] | None = None
         for channel in self.db.list_channels(enabled_only=True):
             source = str(channel["source"])
             try:
                 lookup: str | int = int(source) if source.lstrip("-").isdigit() else source
-                entity = await self.client.get_entity(lookup)
+                try:
+                    entity = await self.client.get_entity(lookup)
+                except Exception:
+                    if not isinstance(lookup, int):
+                        raise
+                    if dialog_entities is None:
+                        dialog_entities = {}
+                        async for dialog in self.client.iter_dialogs():
+                            dialog_entities[int(dialog.id)] = dialog.entity
+                            entity_id = int(getattr(dialog.entity, "id", 0))
+                            if entity_id:
+                                dialog_entities[entity_id] = dialog.entity
+                    internal_id = abs(lookup) - 1_000_000_000_000
+                    entity = dialog_entities.get(lookup) or dialog_entities.get(internal_id)
+                    if entity is None:
+                        raise
                 telegram_id = int(entity.id)
                 self.db.update_channel(int(channel["id"]), telegram_id=telegram_id, last_error=None)
                 resolved.append(telegram_id)

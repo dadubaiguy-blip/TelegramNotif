@@ -117,6 +117,24 @@ object TermuxBridge {
         context.startService(intent)
     }
 
+    fun launchTelegramLogin(context: Context, projectPath: String) {
+        require(isInstalled(context)) { "Termux is not installed" }
+        val command = "cd ${shellQuote(projectPath)} && .venv/bin/python scripts/auth_telegram.py"
+        val intent = Intent(ACTION_RUN_COMMAND).apply {
+            setPackage(TERMUX_PACKAGE)
+            putExtra(EXTRA_COMMAND_PATH, TERMUX_BASH)
+            putExtra(EXTRA_ARGUMENTS, arrayOf("-lc", command))
+            putExtra(EXTRA_WORKDIR, TERMUX_HOME)
+            putExtra(EXTRA_RUNNER, "terminal-session")
+            putExtra(EXTRA_COMMAND_LABEL, "Telegram login")
+            putExtra(
+                EXTRA_COMMAND_DESCRIPTION,
+                "Enter your phone number, Telegram code, and optional 2FA password",
+            )
+        }
+        context.startService(intent)
+    }
+
     private fun shellQuote(value: String): String =
         "'" + value.replace("'", "'\"'\"'") + "'"
 

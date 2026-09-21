@@ -32,15 +32,19 @@ used temporary runner keys and may require one uninstall before installing 0.4.0
    `/data/data/com.termux/files/home/TelegramNotif`, and updates it on future launches.
    A setup window displays live logs, estimated percentage and time remaining, and download speed
    whenever the command-line downloader reports one.
-3. After the first clone, configure `.env` and complete `python scripts/auth_telegram.py` once in
-   Termux. These local credentials, the Telegram session, and the `data/` folder are not overwritten
-   by repository updates.
+3. Start the local backend once, then open the gear menu. Under **Telegram account**, enter your own
+   API ID and API hash from `my.telegram.org`, enable channel watching, and tap
+   **Save credentials and log in**. Enter your phone number, Telegram code, and optional 2FA password
+   in the Termux window. The app saves the settings and reconnects the listener after login, so
+   editing `.env` is not required. The session and `data/` folder are not overwritten by updates.
 4. Enter the backend URL in Settings. Use `http://127.0.0.1:8000` for Termux on the same phone;
    for the Android emulator's computer, use `http://10.0.2.2:8000`; for a physical phone and a
    computer backend, use the computer's LAN address or an HTTPS URL.
-5. Enter the GapGPT key and text/vision model IDs, save, and test the connection.
-6. Join private Telegram channels with the account used by the backend session. Use **Find joined**
-   or add a numeric `-100...` channel ID.
+5. Enter the GapGPT base URL, key, text/vision model IDs, image-analysis toggle, and timeout in the
+   gear menu, then save and test the connection.
+6. Join private Telegram channels with the same account used for the backend session. The complete
+   numeric `-100...` channel ID is enough after the account has joined. Use **Find joined channels**
+   or paste that numeric ID into the channel field.
 7. Tap **Start alerts**. The app uses a foreground service to poll unread notifications every 15
    seconds and shows high-importance local notifications, including the first album image. Only
    messages received after the Telegram listener starts are processed. Only priced game listings
