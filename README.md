@@ -45,6 +45,11 @@ only when the revision changed. Local `.env`, Telegram session, database, and me
 Termux and the one-time Telegram login still need to be installed/configured by the user; Android
 does not allow the APK to silently install another app or complete an account login.
 
+The project belongs in Termux's private home at `$HOME/TelegramNotif`. Do not move its Python
+environment to shared Android storage: shared storage does not provide the Unix executable and
+symlink behavior a virtual environment needs. During first setup, the dependency phase may spend
+several minutes around 68%; the app now emits heartbeat logs while packages are downloaded or built.
+
 ## Telegram setup
 
 1. Create Telegram API credentials at `https://my.telegram.org` and put `TELEGRAM_API_ID` and

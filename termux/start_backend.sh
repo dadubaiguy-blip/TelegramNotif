@@ -80,6 +80,57 @@ run_logged() {
     return "$command_status"
 }
 
+run_logged_with_heartbeat() {
+    local from="$1"
+    local to="$2"
+    local phase="$3"
+    local heartbeat_message="$4"
+    shift 4
+    CURRENT_PROGRESS="$from"
+    emit_progress "$from" "$phase" "Running: $*"
+    "$@" > >(
+        tr '\r' '\n' | while IFS= read -r line || [ -n "$line" ]; do
+            local percent="$from"
+            if [[ "$line" =~ ([0-9]{1,3})% ]]; then
+                local inner="${BASH_REMATCH[1]}"
+                if [ "$inner" -le 100 ]; then
+                    percent=$((from + (to - from) * inner / 100))
+                fi
+            fi
+            echo "$line"
+            emit_progress "$percent" "$phase" "$line"
+        done
+    ) 2>&1 &
+    local command_pid=$!
+    local heartbeat_started
+    heartbeat_started="$(date +%s)"
+    (
+        while kill -0 "$command_pid" 2>/dev/null; do
+            sleep 8
+            if kill -0 "$command_pid" 2>/dev/null; then
+                local elapsed step progress
+                elapsed=$(($(date +%s) - heartbeat_started))
+                step=$((elapsed / 20))
+                if [ "$step" -gt $((to - from - 1)) ]; then
+                    step=$((to - from - 1))
+                fi
+                progress=$((from + step))
+                emit_progress "$progress" "$phase" "$heartbeat_message • ${elapsed}s elapsed"
+            fi
+        done
+    ) &
+    local heartbeat_pid=$!
+    wait "$command_pid"
+    local command_status=$?
+    kill "$heartbeat_pid" 2>/dev/null || true
+    wait "$heartbeat_pid" 2>/dev/null || true
+    if [ "$command_status" -eq 0 ]; then
+        CURRENT_PROGRESS="$to"
+        emit_progress "$to" "$phase" "$phase complete"
+    fi
+    return "$command_status"
+}
+
 fail_setup() {
     local message="$1"
     echo "[$(date)] ERROR: $message"
@@ -125,11 +176,12 @@ else
     announce 68 "Checking Python environment" "Python environment is already available"
 fi
 
-DEPENDENCY_HASH="$(sha256sum pyproject.toml | cut -d ' ' -f 1)"
+DEPENDENCY_HASH="$(sha256sum pyproject.toml requirements-termux.txt | sha256sum | cut -d ' ' -f 1)"
 INSTALLED_HASH="$(cat .venv/.telegramnotif_dependency_hash 2>/dev/null || true)"
 if [ "$DEPENDENCY_HASH" != "$INSTALLED_HASH" ]; then
-    run_logged 68 94 "Downloading dependencies" \
-        .venv/bin/python -m pip install --progress-bar on -e . \
+    run_logged_with_heartbeat 68 94 "Installing dependencies" \
+        "Still downloading or building Python packages; first setup can take several minutes" \
+        .venv/bin/python -m pip install --progress-bar on -r requirements-termux.txt \
         || fail_setup "Python dependency installation failed"
     echo "$DEPENDENCY_HASH" >".venv/.telegramnotif_dependency_hash"
 else
