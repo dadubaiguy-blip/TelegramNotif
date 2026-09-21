@@ -52,7 +52,7 @@ environment to shared Android storage: shared storage does not provide the Unix 
 symlink behavior a virtual environment needs. During first setup, the dependency phase may spend
 several minutes around 68%; the app now emits heartbeat logs while packages are downloaded or built.
 
-Version 0.6.0 also includes an experimental Telegram Web fallback for accounts that cannot create
+Version 0.6.1 also includes an experimental Telegram Web fallback for accounts that cannot create
 Telegram API credentials. Open the gear menu, enable **Telegram Web beta**, and sign in inside the
 app. The WebView login is stored in app-private WebView storage and reused by the foreground monitor.
 Current visible messages are recorded as a baseline; only messages observed afterward are submitted

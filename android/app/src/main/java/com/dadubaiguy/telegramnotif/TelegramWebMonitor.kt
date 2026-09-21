@@ -24,7 +24,7 @@ class TelegramWebMonitor(
     private val settings: SettingsStore,
 ) {
     private val appContext = context.applicationContext
-    private val handler = Handler(Looper.getMainLooper())
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val executor: ExecutorService = Executors.newSingleThreadExecutor()
     private var webView: WebView? = null
     private var channels: List<ChannelInfo> = emptyList()
@@ -37,7 +37,7 @@ class TelegramWebMonitor(
     fun start() {
         if (running) return
         running = true
-        handler.post {
+        mainHandler.post {
             val view = WebView(appContext).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
@@ -50,7 +50,7 @@ class TelegramWebMonitor(
                 webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String) {
                         val generation = pageGeneration
-                        handler.postDelayed({
+                        this@TelegramWebMonitor.mainHandler.postDelayed({
                             if (running && generation == pageGeneration) extractVisibleMessages()
                         }, PAGE_SETTLE_MILLIS)
                     }
@@ -67,7 +67,7 @@ class TelegramWebMonitor(
 
     fun destroy() {
         running = false
-        handler.removeCallbacksAndMessages(null)
+        mainHandler.removeCallbacksAndMessages(null)
         executor.shutdownNow()
         val view = webView
         webView = null
@@ -81,25 +81,26 @@ class TelegramWebMonitor(
 
     private fun refreshChannels() {
         if (!running) return
-        executor.execute {
+        if (executor.isShutdown) return
+        runCatching { executor.execute {
             val loaded = runCatching { ApiClient(settings).getChannels() }.getOrDefault(emptyList())
-            handler.post {
+            this@TelegramWebMonitor.mainHandler.post {
                 if (!running) return@post
                 channels = loaded
                 channelIndex = 0
                 if (channels.isEmpty()) {
-                    handler.postDelayed(::refreshChannels, EMPTY_RETRY_MILLIS)
+                    mainHandler.postDelayed(::refreshChannels, EMPTY_RETRY_MILLIS)
                 } else {
                     openNextChannel()
                 }
             }
-        }
+        } }
     }
 
     private fun openNextChannel() {
         if (!running) return
         if (channelIndex >= channels.size) {
-            handler.postDelayed(::refreshChannels, CYCLE_PAUSE_MILLIS)
+            mainHandler.postDelayed(::refreshChannels, CYCLE_PAUSE_MILLIS)
             return
         }
         currentSource = channels[channelIndex++].source.trim().removePrefix("@").substringBefore('/')
@@ -107,7 +108,7 @@ class TelegramWebMonitor(
         val route = if (currentSource.startsWith("-")) currentSource else "@$currentSource"
         webView?.loadUrl("https://web.telegram.org/k/#$route")
         val generation = pageGeneration
-        handler.postDelayed({
+        mainHandler.postDelayed({
             if (running && generation == pageGeneration) openNextChannel()
         }, CHANNEL_WINDOW_MILLIS)
     }
@@ -175,7 +176,7 @@ class TelegramWebMonitor(
         @JavascriptInterface
         fun postMessages(payload: String) {
             if (!running) return
-            executor.execute { ingestPayload(payload) }
+            if (!executor.isShutdown) runCatching { executor.execute { ingestPayload(payload) } }
         }
     }
 
