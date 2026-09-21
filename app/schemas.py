@@ -51,6 +51,16 @@ class TelegramSettingsUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class WebMessageIngest(BaseModel):
+    source: str = Field(min_length=1, max_length=255)
+    external_id: str = Field(min_length=1, max_length=500)
+    text: str = Field(default="", max_length=50_000)
+    channel_title: str | None = Field(default=None, max_length=500)
+    telegram_url: str | None = Field(default=None, max_length=2000)
+    posted_at: str | None = Field(default=None, max_length=100)
+    media_data_urls: list[str] = Field(default_factory=list, max_length=4)
+
+
 class NotificationSettingsUpdate(BaseModel):
     only_notify_with_price: bool | None = None
     click_target: Literal["app", "telegram"] | None = None

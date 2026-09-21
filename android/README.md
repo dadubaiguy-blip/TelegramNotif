@@ -55,6 +55,23 @@ used temporary runner keys and may require one uninstall before installing 0.4.0
    found in text or by the selected vision model. Use the two Android special-access buttons if you
    want urgent matches to sound through DND and open full-screen while the device is locked.
 
+## Telegram Web beta mode
+
+If `my.telegram.org` will not issue an API ID/hash, open the gear menu, enable **Telegram Web beta**,
+and tap **Open Telegram Web login**. Log in on the official Telegram Web page shown inside the app,
+then tap **Done** and start alerts. The login remains in app-private WebView storage after the app UI
+closes or monitoring is stopped. Android cannot reuse an existing Chrome login.
+
+The background foreground-service rotates through configured channels and captures newly visible
+message text and up to four visible images. Its first successful scan establishes a baseline, so old
+messages do not notify. Telegram Web is a fallback rather than a supported message API: page changes,
+Android process limits, unloaded media, or channels that cannot be opened from their configured
+username/ID can cause missed information.
+
+Use **Stop all** in the main screen, **Stop everything** in Settings, or the foreground notification
+action to stop Android monitoring and the Termux backend while retaining the web login. Use
+**Sign out and erase saved web login** to delete cookies, local web storage, and the scan baseline.
+
 The backend suppresses repeat alerts using a persistent content fingerprint across all configured
 channels. If a new caption with price/details replies to an image or album, the backend downloads
 the referenced full album and analyzes it together with that new reply.

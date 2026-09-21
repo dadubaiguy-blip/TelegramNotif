@@ -29,6 +29,18 @@ class SettingsStore(context: Context) {
         get() = preferences.getBoolean(KEY_TELEGRAM_ENABLED, true)
         set(value) = preferences.edit().putBoolean(KEY_TELEGRAM_ENABLED, value).apply()
 
+    var webModeEnabled: Boolean
+        get() = preferences.getBoolean(KEY_WEB_MODE_ENABLED, false)
+        set(value) = preferences.edit().putBoolean(KEY_WEB_MODE_ENABLED, value).apply()
+
+    var webSeenKeys: Set<String>
+        get() = preferences.getStringSet(KEY_WEB_SEEN_KEYS, emptySet())?.toSet() ?: emptySet()
+        set(value) = preferences.edit().putStringSet(KEY_WEB_SEEN_KEYS, value.toSet()).apply()
+
+    fun clearWebSeenKeys() {
+        preferences.edit().remove(KEY_WEB_SEEN_KEYS).apply()
+    }
+
     var aiTimeoutSeconds: String
         get() = preferences.getString(KEY_AI_TIMEOUT_SECONDS, "45") ?: "45"
         set(value) = preferences.edit().putString(KEY_AI_TIMEOUT_SECONDS, value.trim()).apply()
@@ -93,6 +105,8 @@ class SettingsStore(context: Context) {
         private const val KEY_TELEGRAM_API_ID = "telegram_api_id"
         private const val KEY_TELEGRAM_API_HASH = "telegram_api_hash"
         private const val KEY_TELEGRAM_ENABLED = "telegram_enabled"
+        private const val KEY_WEB_MODE_ENABLED = "web_mode_enabled"
+        private const val KEY_WEB_SEEN_KEYS = "web_seen_keys"
         private const val KEY_AI_TIMEOUT_SECONDS = "ai_timeout_seconds"
         private const val KEY_TEXT_MODEL = "text_model"
         private const val KEY_VISION_MODEL = "vision_model"

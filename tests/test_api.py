@@ -92,3 +92,19 @@ def test_app_managed_telegram_and_ai_settings(tmp_path: Path):
         assert settings["telegram"]["api_id"] == 123456
         assert settings["telegram"]["api_hash_set"] is True
         assert settings["ai"]["base_url"] == "https://example.test/v1"
+
+
+def test_web_ingest_accepts_configured_channel_and_deduplicates(tmp_path: Path):
+    with make_client(tmp_path) as client:
+        payload = {
+            "source": "XCrack_Land0",
+            "external_id": "web-message-123",
+            "text": "GTA 6 price $20 DM @seller",
+            "telegram_url": "https://t.me/XCrack_Land0/123",
+        }
+        first = client.post("/api/ingest/web", json=payload)
+        second = client.post("/api/ingest/web", json=payload)
+        assert first.status_code == 200
+        assert first.json()["accepted"] is True
+        assert second.status_code == 200
+        assert len(client.get("/api/messages").json()) == 1

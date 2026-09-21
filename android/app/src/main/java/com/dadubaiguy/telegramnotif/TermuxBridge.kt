@@ -135,6 +135,33 @@ object TermuxBridge {
         context.startService(intent)
     }
 
+    fun stopBackend(context: Context, projectPath: String) {
+        if (!isInstalled(context)) return
+        val quotedProject = shellQuote(projectPath)
+        val command = """
+            PROJECT_DIR=$quotedProject
+            PID_FILE="§PROJECT_DIR/data/termux-backend.pid"
+            if [ -f "§PID_FILE" ]; then
+                PID="§(cat "§PID_FILE" 2>/dev/null || true)"
+                if [ -n "§PID" ] && kill -0 "§PID" 2>/dev/null; then
+                    kill "§PID" 2>/dev/null || true
+                fi
+                rm -f "§PID_FILE"
+            fi
+            command -v termux-wake-unlock >/dev/null 2>&1 && termux-wake-unlock || true
+        """.trimIndent().replace('§', '$')
+        val intent = Intent(ACTION_RUN_COMMAND).apply {
+            setPackage(TERMUX_PACKAGE)
+            putExtra(EXTRA_COMMAND_PATH, TERMUX_BASH)
+            putExtra(EXTRA_ARGUMENTS, arrayOf("-lc", command))
+            putExtra(EXTRA_WORKDIR, TERMUX_HOME)
+            putExtra(EXTRA_RUNNER, "app-shell")
+            putExtra(EXTRA_COMMAND_LABEL, "Stop TelegramNotif")
+            putExtra(EXTRA_COMMAND_DESCRIPTION, "Stop the local TelegramNotif backend")
+        }
+        context.startService(intent)
+    }
+
     private fun shellQuote(value: String): String =
         "'" + value.replace("'", "'\"'\"'") + "'"
 

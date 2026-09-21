@@ -35,6 +35,9 @@ import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.webkit.CookieManager
+import android.webkit.WebStorage
+import android.webkit.WebViewDatabase
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.ArrayDeque
@@ -63,6 +66,7 @@ class MainActivity : Activity() {
     private lateinit var telegramApiIdInput: EditText
     private lateinit var telegramApiHashInput: EditText
     private lateinit var telegramEnabledCheck: CheckBox
+    private lateinit var webModeCheck: CheckBox
     private lateinit var gapGptBaseUrlInput: EditText
     private lateinit var apiKeyInput: EditText
     private lateinit var textModelInput: EditText
@@ -125,7 +129,7 @@ class MainActivity : Activity() {
         registerSetupProgressReceiver()
         requestNotificationPermission()
         updateMonitorButton()
-        if (settings.termuxAutoStart) startTermuxBackend(silent = true)
+        if (settings.autoStart && settings.termuxAutoStart) startTermuxBackend(silent = true)
         if (settings.autoStart) ensureMonitorService()
         refreshListings()
     }
@@ -533,9 +537,29 @@ class MainActivity : Activity() {
         connection.addView(actionButton("Test connection", false) { testConnection() }, marginParams(top = 8))
         form.addView(connection, marginParams(top = 8))
 
+        val telegramWeb = settingsSection(
+            "Telegram Web beta",
+            "Uses a saved web login without an API ID/hash; keep the monitor running for new posts",
+        )
+        webModeCheck = checkBox("Monitor with my saved Telegram Web login", settings.webModeEnabled)
+        telegramWeb.addView(webModeCheck, marginParams(top = 7))
+        telegramWeb.addView(
+            actionButton("Open Telegram Web login", false) { openTelegramWebLogin() },
+            marginParams(top = 7),
+        )
+        telegramWeb.addView(
+            actionButton("Sign out and erase saved web login", false) { confirmClearWebLogin() },
+            marginParams(top = 7),
+        )
+        telegramWeb.addView(
+            label("Stopping monitoring keeps this login. Telegram Web can change and this fallback may occasionally miss media or messages.", 11f, palette("#667085")),
+            marginParams(top = 6),
+        )
+        form.addView(telegramWeb, marginParams(top = 10))
+
         val telegram = settingsSection(
-            "Telegram account",
-            "Your own API credentials from my.telegram.org; private -100 IDs are supported",
+            "Telegram API mode (optional)",
+            "More reliable than Web mode; private -100 IDs are supported",
         )
         telegramApiIdInput = input("Telegram API ID", settings.telegramApiId)
         telegramApiHashInput = input("Telegram API hash", settings.telegramApiHash, password = true)
@@ -630,6 +654,10 @@ class MainActivity : Activity() {
         termuxActions.addView(actionButton("Start now", false) { startTermuxBackend(false) }, LinearLayout.LayoutParams(0, dp(42), 1f))
         termuxActions.addView(actionButton("Open Termux", false) { openTermux() }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { marginStart = dp(7) })
         localBackend.addView(termuxActions, marginParams(top = 7))
+        localBackend.addView(
+            actionButton("Stop everything", false) { stopEverything() },
+            marginParams(top = 7),
+        )
         termuxStatusText = label(
             if (settings.termuxAutoStart) "Automatic local startup is enabled" else "Automatic local startup is off",
             11f,
@@ -828,6 +856,10 @@ class MainActivity : Activity() {
                 )
                 client.updateNotificationSettings(settings.onlyPriced, settings.clickTarget)
                 runOnUiThread {
+                    if (settings.autoStart) {
+                        stopService(Intent(this, NotificationMonitorService::class.java))
+                        ensureMonitorService()
+                    }
                     status("Settings saved", StatusState.GOOD)
                     dialog.dismiss()
                     refreshListings()
@@ -1157,8 +1189,36 @@ class MainActivity : Activity() {
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://f-droid.org/packages/com.termux/")))
     }
 
+    private fun openTelegramWebLogin() {
+        saveLocalFields()
+        settings.webModeEnabled = true
+        if (::webModeCheck.isInitialized) webModeCheck.isChecked = true
+        startActivity(Intent(this, TelegramWebLoginActivity::class.java))
+    }
+
+    private fun confirmClearWebLogin() {
+        AlertDialog.Builder(this)
+            .setTitle("Erase Telegram Web login?")
+            .setMessage("This stops monitoring and removes Telegram Web cookies and local login storage from this app.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Erase") { _, _ -> clearTelegramWebLogin() }
+            .show()
+    }
+
+    private fun clearTelegramWebLogin() {
+        stopEverything()
+        settings.webModeEnabled = false
+        settings.clearWebSeenKeys()
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().flush()
+        WebStorage.getInstance().deleteAllData()
+        WebViewDatabase.getInstance(this).clearHttpAuthUsernamePassword()
+        if (::webModeCheck.isInitialized) webModeCheck.isChecked = false
+        status("Telegram Web login erased", StatusState.GOOD)
+    }
+
     private fun toggleMonitor() {
-        if (settings.autoStart) stopAlerts() else startAlerts()
+        if (settings.autoStart) stopEverything() else startAlerts()
     }
 
     private fun startAlerts() {
@@ -1183,9 +1243,16 @@ class MainActivity : Activity() {
         status("Background alerts are paused", StatusState.NEUTRAL)
     }
 
+    private fun stopEverything() {
+        stopAlerts()
+        runCatching { TermuxBridge.stopBackend(this, settings.termuxProjectPath) }
+        termuxStatus("Web monitor, alerts and local backend are stopped. Saved web login is kept.")
+        status("Everything stopped • web login kept", StatusState.NEUTRAL)
+    }
+
     private fun updateMonitorButton() {
         if (!::monitorButton.isInitialized) return
-        monitorButton.text = if (settings.autoStart) "Pause" else "Start alerts"
+        monitorButton.text = if (settings.autoStart) "Stop all" else "Start alerts"
         monitorButton.background = rounded(if (settings.autoStart) palette("#F2F4F7") else palette("#315EFB"), 10)
         monitorButton.setTextColor(if (settings.autoStart) palette("#344054") else Color.WHITE)
     }
@@ -1205,6 +1272,7 @@ class MainActivity : Activity() {
         settings.telegramApiId = telegramApiIdInput.text.toString()
         settings.telegramApiHash = telegramApiHashInput.text.toString()
         settings.telegramEnabled = telegramEnabledCheck.isChecked
+        settings.webModeEnabled = webModeCheck.isChecked
         settings.gapGptBaseUrl = gapGptBaseUrlInput.text.toString()
         settings.apiKey = apiKeyInput.text.toString()
         settings.textModel = textModelInput.text.toString()

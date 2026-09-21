@@ -52,6 +52,19 @@ environment to shared Android storage: shared storage does not provide the Unix 
 symlink behavior a virtual environment needs. During first setup, the dependency phase may spend
 several minutes around 68%; the app now emits heartbeat logs while packages are downloaded or built.
 
+Version 0.6.0 also includes an experimental Telegram Web fallback for accounts that cannot create
+Telegram API credentials. Open the gear menu, enable **Telegram Web beta**, and sign in inside the
+app. The WebView login is stored in app-private WebView storage and reused by the foreground monitor.
+Current visible messages are recorded as a baseline; only messages observed afterward are submitted
+to the same AI, price filter, cross-channel deduplication, and watchlist-alarm pipeline. The monitor
+tries to copy visible listing images into the backend for vision analysis, but Telegram Web is not a
+stable API and changes to its page can temporarily break extraction.
+
+The main **Stop all** button and the foreground notification's **Stop everything** action stop the
+WebView monitor, Android polling, wake lock, and Termux backend. They preserve the saved web login.
+Use **Sign out and erase saved web login** to stop everything and remove the WebView cookies and
+storage as well.
+
 ## Telegram setup
 
 1. Create your own Telegram API credentials at `https://my.telegram.org`. In the Android app, open
@@ -81,6 +94,15 @@ The app's **Settings → Channels → Find joined channels** button lists channe
 authorized Telegram account. You can select a private channel there or paste its `-100...` ID.
 The API reloads the listener after adding or changing a channel. It does not auto-join invite links.
 Keep `data/telegram.session` private; it represents a logged-in Telegram session.
+
+### Telegram Web fallback
+
+Telegram Web mode does not require an API ID/hash or a channel bot. It must be logged in inside
+TelegramNotif because Android does not allow the app to import another browser's cookies. Private
+channels must already be visible to that Telegram account. A foreground service and partial wake
+lock improve screen-off operation, but Android firmware may still stop the process; exclude both
+TelegramNotif and Termux from battery optimization. Compared with MTProto API mode, Web mode can
+miss posts or media and may need an app update after Telegram changes its website.
 
 ## GapGPT setup
 

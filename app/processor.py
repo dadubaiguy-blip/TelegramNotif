@@ -68,6 +68,10 @@ def _has_price(parsed: dict[str, Any]) -> bool:
 
 
 def _telegram_url(row: dict[str, Any]) -> str | None:
+    raw = Database.parse_json(row.get("raw_json"))
+    direct_url = raw.get("telegram_url")
+    if isinstance(direct_url, str) and direct_url.startswith(("https://t.me/", "tg://")):
+        return direct_url
     source = str(row.get("source", "")).lstrip("@")
     message_id = row.get("telegram_message_id")
     if not source or not message_id:

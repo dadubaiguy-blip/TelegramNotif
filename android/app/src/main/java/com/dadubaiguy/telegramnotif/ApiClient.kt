@@ -109,6 +109,9 @@ class ApiClient(private val settings: SettingsStore) {
         request("POST", "/api/channels", payload.toString())
     }
 
+    fun ingestWebMessage(payload: JSONObject): JSONObject =
+        JSONObject(request("POST", "/api/ingest/web", payload.toString()))
+
     fun getWatchlist(): List<WatchlistItem> {
         val payload = JSONArray(request("GET", "/api/watchlist"))
         return buildList {

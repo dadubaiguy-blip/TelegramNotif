@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import hashlib
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -24,6 +27,7 @@ from .schemas import (
     NotificationSettingsUpdate,
     TelegramSettingsUpdate,
     WatchlistItem,
+    WebMessageIngest,
 )
 from .telegram_service import TelegramService
 
@@ -36,6 +40,40 @@ def _safe_media_path(media_dir: Path, stored_path: str) -> Path:
     if candidate.parent != media_dir.resolve():
         raise HTTPException(status_code=404, detail="media not found")
     return candidate
+
+
+def _web_message_id(source: str, external_id: str, image_index: int = 0) -> int:
+    value = f"web:{source}:{external_id}:{image_index}".encode()
+    return -int.from_bytes(hashlib.sha256(value).digest()[:7], "big")
+
+
+def _save_web_media(
+    media_dir: Path,
+    source: str,
+    external_id: str,
+    data_urls: list[str],
+) -> list[tuple[str, str]]:
+    saved: list[tuple[str, str]] = []
+    allowed = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+    for index, data_url in enumerate(data_urls[:4]):
+        try:
+            header, encoded = data_url.split(",", 1)
+            mime = header.removeprefix("data:").split(";", 1)[0].lower()
+            extension = allowed.get(mime)
+            if not extension:
+                continue
+            content = base64.b64decode(encoded, validate=True)
+            if not content or len(content) > 3 * 1024 * 1024:
+                continue
+            digest = hashlib.sha256(
+                f"{source}:{external_id}:{index}".encode()
+            ).hexdigest()[:24]
+            filename = f"web_{digest}{extension}"
+            (media_dir / filename).write_bytes(content)
+            saved.append((filename, mime))
+        except (ValueError, binascii.Error, OSError):
+            continue
+    return saved
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -259,6 +297,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # This registers the future mobile push target. FCM/APNs/Web Push delivery is intentionally
         # kept behind the frontend/provider choice; the local WebSocket stream works immediately.
         return db.register_device(payload.token, payload.platform, payload.endpoint)
+
+    @app.post("/api/ingest/web")
+    async def ingest_web_message(payload: WebMessageIngest) -> dict[str, Any]:
+        source = payload.source.strip().removeprefix("@").removeprefix("https://t.me/")
+        channel = db.get_channel_by_source(source)
+        if not channel or not channel.get("enabled"):
+            raise HTTPException(status_code=404, detail="channel is not enabled")
+        media = _save_web_media(
+            settings.media_dir,
+            source,
+            payload.external_id,
+            payload.media_data_urls,
+        )
+        raw = {
+            "origin": "telegram_web",
+            "external_id": payload.external_id,
+            "telegram_url": payload.telegram_url,
+        }
+        if len(media) > 1:
+            items = [
+                {
+                    "telegram_message_id": _web_message_id(
+                        source, payload.external_id, index
+                    ),
+                    "text": payload.text if index == 0 else "",
+                    "channel_title": payload.channel_title,
+                    "posted_at": payload.posted_at,
+                    "media_path": filename,
+                    "media_mime": mime,
+                    "raw": raw,
+                }
+                for index, (filename, mime) in enumerate(media)
+            ]
+            result = await processor.process_album(
+                channel=channel,
+                album_id=f"web:{source}:{payload.external_id}",
+                items=items,
+                primary_telegram_message_id=items[0]["telegram_message_id"],
+            )
+        else:
+            media_path, media_mime = media[0] if media else (None, None)
+            result = await processor.process(
+                channel=channel,
+                telegram_message_id=_web_message_id(source, payload.external_id),
+                text=payload.text,
+                channel_title=payload.channel_title,
+                posted_at=payload.posted_at,
+                media_path=media_path,
+                media_mime=media_mime,
+                raw=raw,
+            )
+        return {"accepted": True, "notification_created": result is not None}
 
     @app.post("/api/telegram/reload")
     async def reload_telegram() -> dict[str, Any]:

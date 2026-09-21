@@ -11,6 +11,7 @@ import android.media.AudioAttributes
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.media.RingtoneManager
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -19,22 +20,44 @@ import java.util.concurrent.TimeUnit
 class NotificationMonitorService : Service() {
     private lateinit var settings: SettingsStore
     private var scheduler: ScheduledExecutorService? = null
+    private var webMonitor: TelegramWebMonitor? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
         settings = SettingsStore(this)
         createNotificationChannels()
         startForeground(SERVICE_NOTIFICATION_ID, serviceNotification())
+        wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:web-monitor")
+            .apply {
+                setReferenceCounted(false)
+                acquire()
+            }
         scheduler = Executors.newSingleThreadScheduledExecutor()
         scheduler?.scheduleWithFixedDelay(::pollBackend, 0, POLL_SECONDS, TimeUnit.SECONDS)
+        if (settings.webModeEnabled) {
+            webMonitor = TelegramWebMonitor(this, settings).also { it.start() }
+        }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
-        START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP_ALL) {
+            settings.autoStart = false
+            runCatching { TermuxBridge.stopBackend(this, settings.termuxProjectPath) }
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         scheduler?.shutdownNow()
         scheduler = null
+        webMonitor?.destroy()
+        webMonitor = null
+        wakeLock?.takeIf { it.isHeld }?.release()
+        wakeLock = null
         super.onDestroy()
     }
 
@@ -124,13 +147,29 @@ class NotificationMonitorService : Service() {
         manager.notify(item.id, notification)
     }
 
-    private fun serviceNotification(): Notification = Notification.Builder(this, SERVICE_CHANNEL_ID)
-        .setSmallIcon(com.dadubaiguy.telegramnotif.R.drawable.ic_stat_notify)
-        .setContentTitle(getString(R.string.app_name))
-        .setContentText("Watching Telegram listings")
-        .setOngoing(true)
-        .setCategory(Notification.CATEGORY_SERVICE)
-        .build()
+    private fun serviceNotification(): Notification {
+        val stopIntent = Intent(this, NotificationMonitorService::class.java).setAction(ACTION_STOP_ALL)
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            991,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return Notification.Builder(this, SERVICE_CHANNEL_ID)
+            .setSmallIcon(com.dadubaiguy.telegramnotif.R.drawable.ic_stat_notify)
+            .setContentTitle(getString(R.string.app_name))
+            .setContentText(if (settings.webModeEnabled) "Telegram Web and listing alerts are running" else "Watching Telegram listings")
+            .addAction(
+                Notification.Action.Builder(
+                    R.drawable.ic_stat_notify,
+                    "Stop everything",
+                    stopPendingIntent,
+                ).build(),
+            )
+            .setOngoing(true)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .build()
+    }
 
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java)
@@ -187,6 +226,7 @@ class NotificationMonitorService : Service() {
     }
 
     companion object {
+        const val ACTION_STOP_ALL = "com.dadubaiguy.telegramnotif.STOP_ALL"
         private const val POLL_SECONDS = 15L
         private const val SERVICE_NOTIFICATION_ID = 11
         private const val SERVICE_CHANNEL_ID = "telegramnotif_service"
